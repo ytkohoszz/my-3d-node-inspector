@@ -1,25 +1,55 @@
-import { Plugin, TFile, Notice } from "obsidian";
+import { Plugin, TFile, Notice, FuzzySuggestModal, App } from "obsidian";
 import { NodeInspectorModal } from "./viewer-modal";
 import { InspectorOpenOptions, NodeImageItem } from "./types";
 
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "gif", "svg"]);
 
+class NoteSelectModal extends FuzzySuggestModal<TFile> {
+  private plugin: My3DNodeInspectorPlugin;
+
+  constructor(app: App, plugin: My3DNodeInspectorPlugin) {
+    super(app);
+    this.plugin = plugin;
+    this.setPlaceholder("Выбери заметку со скриншотом нод…");
+  }
+
+  getItems(): TFile[] {
+    return this.app.vault.getMarkdownFiles().filter(file => {
+      const cache = this.app.metadataCache.getFileCache(file);
+      const embeds = cache?.embeds || [];
+      return embeds.some(e => {
+        const ext = e.link.split(".").pop()?.toLowerCase() || "";
+        return IMAGE_EXTENSIONS.has(ext);
+      });
+    });
+  }
+
+  getItemText(item: TFile): string {
+    return item.basename;
+  }
+
+  onChooseItem(item: TFile): void {
+    this.plugin.openInspector({ file: item });
+  }
+}
+
 export default class My3DNodeInspectorPlugin extends Plugin {
   async onload(): Promise<void> {
-    // Команда для открытия инспектора активной заметки
+    // 1. Иконка в левой панели (Ribbon) — видно сразу и на iPad, и на десктопе
+    this.addRibbonIcon("share-2", "3D: Инспектор схем нод", () => {
+      this.triggerInspectorFlow();
+    });
+
+    // 2. Команда в палитре (Ctrl/Cmd+P)
     this.addCommand({
-      id: "open-active-3d-node-inspector",
-      name: "3D: Открыть схему нод текущей заметки",
-      checkCallback: (checking: boolean) => {
-        const activeFile = this.app.workspace.getActiveFile();
-        if (!activeFile || activeFile.extension !== "md") return false;
-        if (checking) return true;
-        this.openInspector({ file: activeFile });
-        return true;
+      id: "open-3d-node-inspector",
+      name: "3D: Открыть схему нод (инспектор)",
+      callback: () => {
+        this.triggerInspectorFlow();
       }
     });
 
-    // Регистрация на объекте плагина для быстрого вызова из 3d.js
+    // Регистрация глобального объекта для вызова из 3d.js
     (window as unknown as Record<string, unknown>).__my3DNodeInspector = this;
   }
 
@@ -27,19 +57,29 @@ export default class My3DNodeInspectorPlugin extends Plugin {
     delete (window as unknown as Record<string, unknown>).__my3DNodeInspector;
   }
 
-  /**
-   * Публичный API для вызова из DataviewJS (3d.js) или других плагинов.
-   */
+  private triggerInspectorFlow(): void {
+    const activeFile = this.app.workspace.getActiveFile();
+    if (activeFile && activeFile.extension === "md") {
+      const images = this.extractImagesFromNote(activeFile);
+      if (images.length > 0) {
+        this.openInspector({ file: activeFile });
+        return;
+      }
+    }
+    // Если активная заметка не открыта или в ней нет картинок — открываем список выбора
+    new NoteSelectModal(this.app, this).open();
+  }
+
   public openInspector(options: InspectorOpenOptions = {}): void {
     const file = options.file || this.app.workspace.getActiveFile();
     if (!file || !(file instanceof TFile)) {
-      new Notice("Открой или выбери заметку со скриншотом нод.");
+      new NoteSelectModal(this.app, this).open();
       return;
     }
 
     const images = this.extractImagesFromNote(file);
     if (images.length === 0) {
-      new Notice("В заметке «" + file.basename + "» нет прикреплённых изображений.");
+      new Notice("В заметке «" + file.basename + "» не найдено прикреплённых картинок.");
       return;
     }
 
@@ -52,9 +92,6 @@ export default class My3DNodeInspectorPlugin extends Plugin {
     modal.open();
   }
 
-  /**
-   * Сканирует метаданные и тело заметки на вложенные скриншоты.
-   */
   public extractImagesFromNote(file: TFile): NodeImageItem[] {
     const items: NodeImageItem[] = [];
     const seen = new Set<string>();
