@@ -35,12 +35,10 @@ class NoteSelectModal extends FuzzySuggestModal<TFile> {
 
 export default class My3DNodeInspectorPlugin extends Plugin {
   async onload(): Promise<void> {
-    // 1. Иконка в левой панели (Ribbon) — видно сразу и на iPad, и на десктопе
     this.addRibbonIcon("share-2", "3D: Инспектор схем нод", () => {
       this.triggerInspectorFlow();
     });
 
-    // 2. Команда в палитре (Ctrl/Cmd+P)
     this.addCommand({
       id: "open-3d-node-inspector",
       name: "3D: Открыть схему нод (инспектор)",
@@ -49,7 +47,6 @@ export default class My3DNodeInspectorPlugin extends Plugin {
       }
     });
 
-    // Регистрация глобального объекта для вызова из 3d.js
     (window as unknown as Record<string, unknown>).__my3DNodeInspector = this;
   }
 
@@ -66,7 +63,6 @@ export default class My3DNodeInspectorPlugin extends Plugin {
         return;
       }
     }
-    // Если активная заметка не открыта или в ней нет картинок — открываем список выбора
     new NoteSelectModal(this.app, this).open();
   }
 
@@ -85,6 +81,7 @@ export default class My3DNodeInspectorPlugin extends Plugin {
 
     const modal = new NodeInspectorModal(
       this.app,
+      file,
       images,
       file.basename,
       options.imageIndex || 0

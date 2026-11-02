@@ -116,6 +116,13 @@
   color: #d85b57;
 }
 
+.mni-pin-toggle.is-active {
+  background: rgba(229, 161, 88, 0.25);
+  border-color: #e5a158;
+  color: #e5a158;
+  box-shadow: 0 0 12px rgba(229, 161, 88, 0.35);
+}
+
 /* Вьюпорт и трансформируемый слой */
 .mni-viewport {
   position: absolute;
@@ -126,6 +133,10 @@
 
 .mni-viewport.is-dragging {
   cursor: grabbing;
+}
+
+.mni-viewport.is-pin-mode {
+  cursor: crosshair;
 }
 
 .mni-canvas-layer {
@@ -145,7 +156,129 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-/* Нижняя панель переключения скриншотов */
+/* Слой интерактивных пинов */
+.mni-pins-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.mni-pin-wrap {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  z-index: 20;
+}
+
+.mni-pin-marker {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  border-radius: 50%;
+  background: #e5a158;
+  color: #141619;
+  border: 2px solid #ffffff;
+  font-size: 0.76rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
+  transition: transform 0.14s ease, box-shadow 0.14s ease;
+  touch-action: manipulation;
+}
+
+.mni-pin-marker:hover {
+  transform: scale(1.18);
+  box-shadow: 0 4px 14px rgba(229, 161, 88, 0.6);
+}
+
+/* Карточка-пояснение по клику на пин */
+.mni-pin-card {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 220px;
+  max-width: 280px;
+  background: rgba(28, 30, 36, 0.95);
+  border: 1px solid var(--background-modifier-border);
+  border-top: 3px solid #e5a158;
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  user-select: text;
+}
+
+.mni-pin-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.mni-pin-card-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #e5a158;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.mni-pin-card-body {
+  font-size: 0.82rem;
+  line-height: 1.35;
+  color: var(--text-normal);
+  word-break: break-word;
+}
+
+.mni-pin-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: 6px;
+}
+
+.mni-pin-action-btn {
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: 5px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.mni-pin-action-btn:hover {
+  color: var(--text-normal);
+}
+
+.mni-pin-action-btn.is-danger {
+  color: #d85b57;
+  border-color: rgba(216, 91, 87, 0.35);
+}
+
+.mni-pin-edit-input {
+  width: 100%;
+  height: 65px;
+  font-size: 0.82rem;
+  border-radius: 6px;
+  padding: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  resize: none;
+}
+
+/* Нижняя панель */
 .mni-bottombar {
   position: absolute;
   bottom: 16px;
