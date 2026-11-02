@@ -328,3 +328,65 @@
   border-radius: 12px;
   border: 1px solid var(--background-modifier-border);
 }
+
+/* Векторный кодовый блок 3d-nodes */
+.mni-dsl-card {
+  margin: 12px 0;
+  padding: 12px 14px;
+  background: rgba(22, 24, 30, 0.95);
+  border: 1px solid var(--background-modifier-border);
+  border-top: 3px solid #9c83e8;
+  border-radius: 10px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+  overflow-x: auto;
+}
+
+.mni-dsl-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.mni-dsl-badge {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #9c83e8;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.mni-dsl-svg {
+  display: block;
+  user-select: none;
+}
+
+.mni-dsl-node-bg {
+  fill: #2a2d35;
+  stroke: rgba(255, 255, 255, 0.12);
+  stroke-width: 1.2;
+}
+
+.mni-dsl-node-head {
+  fill: #3b3f4a;
+}
+
+.mni-dsl-node-text {
+  fill: #f0f2f5;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-text);
+  pointer-events: none;
+}
+
+.mni-dsl-socket {
+  fill: #a0a5af;
+  stroke: #181a20;
+  stroke-width: 1.5;
+}
+
+.mni-dsl-wire {
+  fill: none;
+  stroke-width: 2.2;
+  opacity: 0.85;
+}

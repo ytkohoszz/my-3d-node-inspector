@@ -1,9 +1,9 @@
 {
-	"id": "my-3d-node-inspector",
-	"name": "3D Node Inspector",
-	"version": "0.1.3",
-	"minAppVersion": "1.4.0",
-	"description": "Инспектор и просмотрщик деревьев нод и схем с поддержкой жестов iPad и навигацией по скриншотам.",
-	"author": "Mersinho Hecke",
-	"isDesktopOnly": false
+  "id": "my-3d-node-inspector",
+  "name": "3D Node Inspector",
+  "version": "0.1.4",
+  "minAppVersion": "1.4.0",
+  "description": "Инспектор и просмотрщик деревьев нод и схем с поддержкой жестов iPad и навигацией по скриншотам.",
+  "author": "Mersinho Hecke",
+  "isDesktopOnly": false
 }

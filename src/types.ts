@@ -2,8 +2,8 @@ import { TFile } from "obsidian";
 
 export interface NodePin {
   id: number;
-  x: number; // 0.0 - 1.0 (относительно оригинальной ширины картинки)
-  y: number; // 0.0 - 1.0 (относительно оригинальной высоты картинки)
+  x: number;
+  y: number;
   text: string;
 }
 
@@ -17,4 +17,16 @@ export interface NodeImageItem {
 export interface InspectorOpenOptions {
   file?: TFile;
   imageIndex?: number;
+}
+
+export interface DslSocketLink {
+  fromNode: string;
+  fromSocket: string;
+  toNode: string;
+  toSocket: string;
+}
+
+export interface ParsedDslGraph {
+  nodes: string[];
+  links: DslSocketLink[];
 }

@@ -1,6 +1,7 @@
-import { Plugin, TFile, Notice, FuzzySuggestModal, App } from "obsidian";
+import { Plugin, TFile, Notice, FuzzySuggestModal, App, MarkdownPostProcessorContext } from "obsidian";
 import { NodeInspectorModal } from "./viewer-modal";
 import { InspectorOpenOptions, NodeImageItem } from "./types";
+import { parseDslText, renderGraphToSvg } from "./dsl-renderer";
 
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "gif", "svg"]);
 
@@ -47,11 +48,33 @@ export default class My3DNodeInspectorPlugin extends Plugin {
       }
     });
 
+    // Регистрация рендера кодовых блоков ```3d-nodes
+    this.registerMarkdownCodeBlockProcessor("3d-nodes", (source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext) => {
+      this.renderDslCodeBlock(source, el, ctx);
+    });
+
     (window as unknown as Record<string, unknown>).__my3DNodeInspector = this;
   }
 
   onunload(): void {
     delete (window as unknown as Record<string, unknown>).__my3DNodeInspector;
+  }
+
+  private renderDslCodeBlock(source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext): void {
+    el.empty();
+    const wrap = el.createDiv({ cls: "mni-dsl-card" });
+
+    const graph = parseDslText(source);
+    if (graph.nodes.length === 0) {
+      wrap.createDiv({ cls: "mni-empty-msg", text: "Схема пуста. Добавь связи вида: [Node A] -> Socket -> [Node B]" });
+      return;
+    }
+
+    const head = wrap.createDiv({ cls: "mni-dsl-head" });
+    head.createSpan({ cls: "mni-dsl-badge", text: `☊ Схема нод (${graph.nodes.length} нод)` });
+
+    const svg = renderGraphToSvg(graph);
+    wrap.appendChild(svg);
   }
 
   private triggerInspectorFlow(): void {
