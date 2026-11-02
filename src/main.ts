@@ -1,114 +1,85 @@
-import {
-	Editor,
-	MarkdownView,
-	MarkdownFileInfo,
-	Modal,
-	Notice,
-	Plugin,
-} from 'obsidian';
-import {
-	DEFAULT_SETTINGS,
-	MyPluginSettings,
-	SampleSettingTab,
-} from './settings';
+import { Plugin, TFile, Notice } from "obsidian";
+import { NodeInspectorModal } from "./viewer-modal";
+import { InspectorOpenOptions, NodeImageItem } from "./types";
 
-// Remember to rename these classes and interfaces!
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "gif", "svg"]);
 
-export default class MyPlugin extends Plugin {
-	settings!: MyPluginSettings;
+export default class My3DNodeInspectorPlugin extends Plugin {
+  async onload(): Promise<void> {
+    // Команда для открытия инспектора активной заметки
+    this.addCommand({
+      id: "open-active-3d-node-inspector",
+      name: "3D: Открыть схему нод текущей заметки",
+      checkCallback: (checking: boolean) => {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile || activeFile.extension !== "md") return false;
+        if (checking) return true;
+        this.openInspector({ file: activeFile });
+        return true;
+      }
+    });
 
-	async onload() {
-		await this.loadSettings();
+    // Регистрация на объекте плагина для быстрого вызова из 3d.js
+    (window as unknown as Record<string, unknown>).__my3DNodeInspector = this;
+  }
 
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (_evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
+  onunload(): void {
+    delete (window as unknown as Record<string, unknown>).__my3DNodeInspector;
+  }
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
+  /**
+   * Публичный API для вызова из DataviewJS (3d.js) или других плагинов.
+   */
+  public openInspector(options: InspectorOpenOptions = {}): void {
+    const file = options.file || this.app.workspace.getActiveFile();
+    if (!file || !(file instanceof TFile)) {
+      new Notice("Открой или выбери заметку со скриншотом нод.");
+      return;
+    }
 
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			},
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (
-				editor: Editor,
-				_ctx: MarkdownView | MarkdownFileInfo,
-			) => {
-				editor.replaceSelection('Sample editor command');
-			},
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView =
-					this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
+    const images = this.extractImagesFromNote(file);
+    if (images.length === 0) {
+      new Notice("В заметке «" + file.basename + "» нет прикреплённых изображений.");
+      return;
+    }
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-				return false;
-			},
-		});
+    const modal = new NodeInspectorModal(
+      this.app,
+      images,
+      file.basename,
+      options.imageIndex || 0
+    );
+    modal.open();
+  }
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
+  /**
+   * Сканирует метаданные и тело заметки на вложенные скриншоты.
+   */
+  public extractImagesFromNote(file: TFile): NodeImageItem[] {
+    const items: NodeImageItem[] = [];
+    const seen = new Set<string>();
 
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(activeDocument, 'click', (_evt: MouseEvent) => {
-			new Notice('Click');
-		});
+    const cache = this.app.metadataCache.getFileCache(file);
+    const embeds = cache?.embeds || [];
 
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(
-			window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000),
-		);
-	}
+    for (const em of embeds) {
+      const linkPath = em.link.split("#")[0]?.split("|")[0]?.trim();
+      if (!linkPath) continue;
 
-	onunload() {}
+      const targetFile = this.app.metadataCache.getFirstLinkpathDest(linkPath, file.path);
+      if (targetFile && targetFile instanceof TFile && IMAGE_EXTENSIONS.has(targetFile.extension.toLowerCase())) {
+        if (!seen.has(targetFile.path)) {
+          seen.add(targetFile.path);
+          items.push({
+            file: targetFile,
+            path: targetFile.path,
+            name: targetFile.name,
+            resourcePath: this.app.vault.adapter.getResourcePath(targetFile.path)
+          });
+        }
+      }
+    }
 
-	async loadSettings() {
-		this.settings = Object.assign(
-			{},
-			DEFAULT_SETTINGS,
-			(await this.loadData()) as Partial<MyPluginSettings>,
-		);
-	}
-
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
-}
-
-class SampleModal extends Modal {
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.setText('Woah!');
-	}
-
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
-	}
+    return items;
+  }
 }
