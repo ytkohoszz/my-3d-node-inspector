@@ -503,3 +503,12 @@
   width: 100px;
   cursor: pointer;
 }
+
+/* --- РАМКА ВЫДЕЛЕНИЯ (MARQUEE) --- */
+.mni-marquee {
+  position: absolute;
+  border: 2px dashed #e5a158;
+  background-color: rgba(229, 161, 88, 0.1);
+  pointer-events: none;
+  z-index: 100;
+}

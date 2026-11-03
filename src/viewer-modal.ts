@@ -22,23 +22,29 @@ export class NodeInspectorModal extends Modal {
   private startTransform: { x: number; y: number } = { x: 0, y: 0 };
 
   // Инструменты
-  private currentTool: ToolType = "select";
+  private currentTool: ToolType = "pan";
   private elementsByImageName: Map<string, CanvasElement[]> = new Map();
-  private selectedElementId: string | null = null;
+  
+  // Выделение
+  private selectedElementIds: Set<string> = new Set();
+  private lastSelectedId: string | null = null;
 
-  // Рисование
+  // Рисование (фигуры)
   private isDrawing: boolean = false;
   private drawStartPoint: { x: number; y: number } = { x: 0, y: 0 };
   private previewEl: HTMLElement | SVGElement | null = null;
 
-  // Перетаскивание
+  // Выделение рамкой (Marquee)
+  private isMarquee: boolean = false;
+  private marqueeStart: { x: number; y: number } = { x: 0, y: 0 };
+  private marqueeEl: HTMLElement | null = null;
+
+  // Перетаскивание (Drag & Drop)
   private isDraggingEl: boolean = false;
   private isDraggingHandle: boolean = false;
   private draggedHandleType: "start" | "end" | null = null;
   private dragStartPoint: { x: number; y: number } = { x: 0, y: 0 };
-  private elStartPos: { x: number, y: number } = { x: 0, y: 0 };
-  private elStartArrow: { x1: number, y1: number, x2: number, y2: number } | null = null;
-  private draggedDOMEl: HTMLElement | SVGElement | null = null;
+  private groupDragStartPositions: Map<string, any> = new Map();
 
   // Undo / Redo
   private history: string[] = [];
@@ -75,7 +81,7 @@ export class NodeInspectorModal extends Modal {
 
     const container = contentEl.createDiv({ cls: "mni-container" });
 
-    // --- Верхняя панель ---
+    // 1. Верхняя панель
     const topbar = container.createDiv({ cls: "mni-topbar" });
     const titleBox = topbar.createDiv({ cls: "mni-title-box" });
     titleBox.createSpan({ cls: "mni-icon", text: "☊" });
@@ -103,7 +109,7 @@ export class NodeInspectorModal extends Modal {
     });
     closeBtn.onclick = () => this.close();
 
-    // --- Вьюпорт ---
+    // 2. Вьюпорт
     this.viewportEl = container.createDiv({ cls: "mni-viewport" });
     this.layerEl = this.viewportEl.createDiv({ cls: "mni-canvas-layer" });
 
@@ -120,7 +126,6 @@ export class NodeInspectorModal extends Modal {
     
     this.elementsLayerEl = this.layerEl.createDiv({ cls: "mni-elements-layer" });
 
-    // --- Инициализация: сначала грузим картинку, потом данные ---
     await this.loadCurrentImageAndElements();
 
     this.renderToolbar(container);
@@ -128,9 +133,11 @@ export class NodeInspectorModal extends Modal {
     
     this.bindPointerEvents(this.viewportEl);
     this.bindKeyboardEvents();
-    this.setTool("select");
+    
+    // ПО УМОЛЧАНИЮ ВКЛЮЧАЕМ ПАНОРАМУ
+    this.setTool("pan");
 
-    // --- Нижняя панель ---
+    // Нижняя панель
     if (this.images.length > 1) {
       const bottombar = container.createDiv({ cls: "mni-bottombar" });
       this.images.forEach((item, idx) => {
@@ -142,7 +149,8 @@ export class NodeInspectorModal extends Modal {
         thumbBtn.onclick = async () => {
           if (this.activeIndex === idx) return;
           this.activeIndex = idx;
-          this.selectedElementId = null;
+          this.selectedElementIds.clear();
+          this.lastSelectedId = null;
           bottombar.querySelectorAll(".mni-thumb-btn").forEach((b, i) => {
             b.classList.toggle("is-active", i === idx);
           });
@@ -152,9 +160,7 @@ export class NodeInspectorModal extends Modal {
     }
   }
 
-  // --- АСИНХРОННАЯ ЗАГРУЗКА КАРТИНКИ И АННОТАЦИЙ ---
-
-  /** Загружает текущую картинку и её аннотации (для первого открытия). */
+  // --- ЗАГРУЗКА КАРТИНКИ И АННОТАЦИЙ ---
   private async loadCurrentImageAndElements(): Promise<void> {
     const cur = this.images[this.activeIndex];
     if (!cur || !this.imgEl) return;
@@ -162,7 +168,6 @@ export class NodeInspectorModal extends Modal {
     await this.setImageSrc(cur.resourcePath);
     this.syncLayersSize();
 
-    // Загружаем данные из YAML
     this.elementsByImageName = await this.manager.loadElements(
       this.imgEl.naturalWidth || 800,
       this.imgEl.naturalHeight || 600
@@ -172,18 +177,18 @@ export class NodeInspectorModal extends Modal {
     this.fitToScreen();
   }
 
-  /** Переключение на другую картинку внутри модалки. */
   private async switchImage(_idx: number): Promise<void> {
     const cur = this.images[this.activeIndex];
     if (!cur || !this.imgEl) return;
 
     await this.setImageSrc(cur.resourcePath);
     this.syncLayersSize();
+    this.updatePropertiesPanel();
+    this.updateDeleteButton();
     this.renderElements();
     this.fitToScreen();
   }
 
-  /** Промис-обёртка над загрузкой изображения. */
   private setImageSrc(src: string): Promise<void> {
     return new Promise<void>((resolve) => {
       if (!this.imgEl) { resolve(); return; }
@@ -220,7 +225,6 @@ export class NodeInspectorModal extends Modal {
         this.historyIndex--;
       }
 
-      // Сохраняем через очередь (не await-им тут, чтобы не тормозить UI)
       this.manager.saveElements(this.elementsByImageName).catch(e => {
         new Notice("Ошибка сохранения: " + e.message);
       });
@@ -247,7 +251,8 @@ export class NodeInspectorModal extends Modal {
     const stateStr = this.history[this.historyIndex];
     if (stateStr) {
       this.elementsByImageName = new Map(JSON.parse(stateStr));
-      this.selectedElementId = null;
+      this.selectedElementIds.clear();
+      this.lastSelectedId = null;
       this.updatePropertiesPanel();
       this.renderElements();
       this.manager.saveElements(this.elementsByImageName).catch(e => {
@@ -265,8 +270,9 @@ export class NodeInspectorModal extends Modal {
 
   private updateDeleteButton() {
     if (this.deleteBtn) {
-      this.deleteBtn.disabled = !this.selectedElementId;
-      this.deleteBtn.classList.toggle("is-disabled", !this.selectedElementId);
+      const hasSelection = this.selectedElementIds.size > 0;
+      this.deleteBtn.disabled = !hasSelection;
+      this.deleteBtn.classList.toggle("is-disabled", !hasSelection);
     }
   }
 
@@ -274,8 +280,8 @@ export class NodeInspectorModal extends Modal {
   private renderToolbar(container: HTMLElement) {
     this.toolbarEl = container.createDiv({ cls: "mni-toolbar" });
     const tools: { id: ToolType; icon: string; label: string; hotkey: string }[] = [
-      { id: "select", icon: "🖐️", label: "Выделение", hotkey: "V" },
       { id: "pan", icon: "✥", label: "Панорама", hotkey: "H" },
+      { id: "select", icon: "🖐️", label: "Выделение", hotkey: "V" },
       { id: "rect", icon: "⬜", label: "Прямоугольник", hotkey: "R" },
       { id: "arrow", icon: "↗️", label: "Стрелка", hotkey: "A" },
       { id: "text", icon: "T", label: "Текст", hotkey: "T" },
@@ -298,7 +304,8 @@ export class NodeInspectorModal extends Modal {
 
   private setTool(tool: ToolType) {
     this.currentTool = tool;
-    this.selectedElementId = null;
+    this.selectedElementIds.clear();
+    this.lastSelectedId = null;
     this.updateDeleteButton();
     this.updatePropertiesPanel();
     this.renderElements();
@@ -318,13 +325,15 @@ export class NodeInspectorModal extends Modal {
     if (!this.propertiesPanelEl) return;
     this.propertiesPanelEl.empty();
 
-    const curImg = this.images[this.activeIndex];
-    if (!curImg || !this.selectedElementId) {
+    if (!this.lastSelectedId) {
       this.propertiesPanelEl.classList.add("is-hidden");
       return;
     }
 
-    const el = this.elementsByImageName.get(curImg.name)?.find(x => x.id === this.selectedElementId);
+    const curImg = this.images[this.activeIndex];
+    if (!curImg) return;
+
+    const el = this.elementsByImageName.get(curImg.name)?.find(x => x.id === this.lastSelectedId);
     if (!el) {
       this.propertiesPanelEl.classList.add("is-hidden");
       return;
@@ -396,7 +405,7 @@ export class NodeInspectorModal extends Modal {
     const elements = this.elementsByImageName.get(curImg.name) || [];
 
     elements.forEach(el => {
-      const isSelected = this.selectedElementId === el.id;
+      const isSelected = this.selectedElementIds.has(el.id);
 
       if (el.type === "arrow") {
         const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
@@ -413,7 +422,8 @@ export class NodeInspectorModal extends Modal {
         
         this.svgLayerEl.appendChild(line);
 
-        if (isSelected) {
+        // Показываем маркеры только если стрелка ОДНА выделена (чтобы не нагромождать)
+        if (isSelected && this.selectedElementIds.size === 1) {
           const drawHandle = (cx: number, cy: number, type: "start" | "end") => {
             const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
             circle.setAttribute("cx", cx.toString());
@@ -497,7 +507,7 @@ export class NodeInspectorModal extends Modal {
         else this.undo();
       }
 
-      if ((e.key === "Delete" || e.key === "Backspace") && this.selectedElementId) {
+      if ((e.key === "Delete" || e.key === "Backspace") && this.selectedElementIds.size > 0) {
         e.preventDefault();
         this.deleteSelected();
       }
@@ -508,14 +518,31 @@ export class NodeInspectorModal extends Modal {
 
   private deleteSelected() {
     const curImg = this.images[this.activeIndex];
-    if (!curImg || !this.selectedElementId) return;
+    if (!curImg || this.selectedElementIds.size === 0) return;
+    
     const list = this.elementsByImageName.get(curImg.name) || [];
-    this.elementsByImageName.set(curImg.name, list.filter(el => el.id !== this.selectedElementId));
-    this.selectedElementId = null;
+    const filtered = list.filter(el => !this.selectedElementIds.has(el.id));
+    this.elementsByImageName.set(curImg.name, filtered);
+    
+    this.selectedElementIds.clear();
+    this.lastSelectedId = null;
     this.updateDeleteButton();
     this.updatePropertiesPanel();
     this.renderElements();
     this.commitHistory();
+  }
+
+  // Вспомогательные методы для рамки (Marquee)
+  private getElementBBox(el: CanvasElement) {
+    if (el.type === "arrow") {
+      return {
+        x: Math.min(el.x1, el.x2),
+        y: Math.min(el.y1, el.y2),
+        width: Math.abs(el.x1 - el.x2),
+        height: Math.abs(el.y1 - el.y2)
+      };
+    }
+    return { x: el.x, y: el.y, width: el.width, height: el.height };
   }
 
   private bindPointerEvents(target: HTMLElement): void {
@@ -539,6 +566,7 @@ export class NodeInspectorModal extends Modal {
       this.activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       pointerMoved = false;
 
+      // --- ЛОГИКА ВЫДЕЛЕНИЯ И ПЕРЕТАСКИВАНИЯ ---
       if (this.currentTool === "select") {
         const svgTarget = e.target as SVGElement;
         const clickedEl = (e.target as HTMLElement).closest(".mni-el, .mni-el-svg") as HTMLElement | SVGElement;
@@ -546,40 +574,65 @@ export class NodeInspectorModal extends Modal {
         if (svgTarget.classList.contains("mni-arrow-handle")) {
           this.isDraggingHandle = true;
           this.draggedHandleType = svgTarget.dataset.handle as "start" | "end";
-          this.selectedElementId = svgTarget.dataset.id || null;
           return;
         }
 
         if (clickedEl) {
-          this.selectedElementId = clickedEl.dataset.id || null;
-          this.updateDeleteButton();
-          this.updatePropertiesPanel();
-          this.renderElements();
-          
-          const curImg = this.images[this.activeIndex];
-          if (!curImg) return;
-          
-          const el = this.elementsByImageName.get(curImg.name)?.find(x => x.id === this.selectedElementId);
-          if (el) {
+          const clickedId = clickedEl.dataset.id;
+          if (clickedId) {
+            if (!this.selectedElementIds.has(clickedId)) {
+              this.selectedElementIds.clear();
+              this.selectedElementIds.add(clickedId);
+            }
+            this.lastSelectedId = clickedId;
+            
+            this.updateDeleteButton();
+            this.updatePropertiesPanel();
+            this.renderElements();
+            
+            // Запоминаем стартовые позиции всех выделенных элементов для группы
             this.isDraggingEl = true;
-            this.dragStartPoint = { x: e.clientX, y: e.clientY };
-            if (el.type === "arrow") {
-              this.elStartArrow = { x1: el.x1, y1: el.y1, x2: el.x2, y2: el.y2 };
-              this.draggedDOMEl = this.svgLayerEl.querySelector(`line[data-id="${this.selectedElementId}"]`);
-            } else {
-              this.elStartPos = { x: el.x, y: el.y };
-              this.draggedDOMEl = this.elementsLayerEl.querySelector(`[data-id="${this.selectedElementId}"]`);
+            this.dragStartPoint = this.getImageCoords(e.clientX, e.clientY);
+            this.groupDragStartPositions.clear();
+            
+            const curImg = this.images[this.activeIndex];
+            if (curImg) {
+              const list = this.elementsByImageName.get(curImg.name) || [];
+              this.selectedElementIds.forEach(id => {
+                const el = list.find(x => x.id === id);
+                if (el) {
+                  if (el.type === "arrow") {
+                    this.groupDragStartPositions.set(id, { x1: el.x1, y1: el.y1, x2: el.x2, y2: el.y2 });
+                  } else {
+                    this.groupDragStartPositions.set(id, { x: el.x, y: el.y });
+                  }
+                }
+              });
             }
           }
           return;
         } else {
-          this.selectedElementId = null;
+          // Клик по пустому месту — старт рамки (Marquee)
+          this.isMarquee = true;
+          this.marqueeStart = this.getImageCoords(e.clientX, e.clientY);
+          this.selectedElementIds.clear();
+          this.lastSelectedId = null;
+          
+          this.marqueeEl = this.elementsLayerEl.createDiv({ cls: "mni-marquee" });
+          this.marqueeEl.style.left = `${this.marqueeStart.x}px`;
+          this.marqueeEl.style.top = `${this.marqueeStart.y}px`;
+          this.marqueeEl.style.width = "0px";
+          this.marqueeEl.style.height = "0px";
+          
           this.updateDeleteButton();
           this.updatePropertiesPanel();
           this.renderElements();
+          if (this.marqueeEl) this.elementsLayerEl.appendChild(this.marqueeEl);
+          return;
         }
       }
 
+      // --- ЛОГИКА РИСОВАНИЯ ---
       if (this.currentTool !== "pan" && this.currentTool !== "select" && this.activePointers.size === 1) {
         this.isDrawing = true;
         const coords = this.getImageCoords(e.clientX, e.clientY);
@@ -610,7 +663,8 @@ export class NodeInspectorModal extends Modal {
         return;
       }
 
-      if (this.activePointers.size === 1 && !this.isDraggingEl && !this.isDraggingHandle) {
+      // --- ЛОГИКА ПАНОРАМИРОВАНИЯ ---
+      if (this.activePointers.size === 1 && !this.isDraggingEl && !this.isDraggingHandle && !this.isMarquee) {
         this.isPanning = true;
         target.classList.add("is-dragging");
         this.startPanPoint = { x: e.clientX, y: e.clientY };
@@ -629,10 +683,54 @@ export class NodeInspectorModal extends Modal {
         pointerMoved = true;
       }
 
-      if (this.isDraggingHandle && this.selectedElementId && this.draggedHandleType) {
+      // РАМКА ВЫДЕЛЕНИЯ (MARQUEE)
+      if (this.isMarquee && this.marqueeEl) {
+        const current = this.getImageCoords(e.clientX, e.clientY);
+        const x = Math.min(this.marqueeStart.x, current.x);
+        const y = Math.min(this.marqueeStart.y, current.y);
+        const w = Math.abs(this.marqueeStart.x - current.x);
+        const h = Math.abs(this.marqueeStart.y - current.y);
+        
+        this.marqueeEl.style.left = `${x}px`;
+        this.marqueeEl.style.top = `${y}px`;
+        this.marqueeEl.style.width = `${w}px`;
+        this.marqueeEl.style.height = `${h}px`;
+        
+        const curImg = this.images[this.activeIndex];
+        if (curImg) {
+          const list = this.elementsByImageName.get(curImg.name) || [];
+          this.selectedElementIds.clear();
+          
+          list.forEach(el => {
+            const bbox = this.getElementBBox(el);
+            if (!(x > bbox.x + bbox.width || x + w < bbox.x || y > bbox.y + bbox.height || y + h < bbox.y)) {
+              this.selectedElementIds.add(el.id);
+            }
+          });
+          
+          // Визуально обновляем выделение
+          this.elementsLayerEl.querySelectorAll('.mni-el').forEach(node => {
+            const htmlEl = node as HTMLElement;
+            htmlEl.classList.toggle('is-selected', this.selectedElementIds.has(htmlEl.dataset.id || ''));
+          });
+          this.svgLayerEl.querySelectorAll('.mni-el-svg').forEach(node => {
+            const svgEl = node as SVGElement;
+            svgEl.classList.toggle('is-selected', this.selectedElementIds.has(svgEl.dataset.id || ''));
+            // Меняем цвет обводки вручную для SVG
+            svgEl.setAttribute("stroke", this.selectedElementIds.has(svgEl.dataset.id || '') ? "#ffffff" : "#e5a158");
+          });
+          
+          this.lastSelectedId = this.selectedElementIds.size > 0 ? Array.from(this.selectedElementIds)[0] : null;
+          this.updateDeleteButton();
+        }
+        return;
+      }
+
+      // ТАЩИМ ЗА МАРКЕР
+      if (this.isDraggingHandle && this.lastSelectedId && this.draggedHandleType) {
         const curImg = this.images[this.activeIndex];
         if (!curImg) return;
-        const el = this.elementsByImageName.get(curImg.name)?.find(x => x.id === this.selectedElementId) as ArrowElement;
+        const el = this.elementsByImageName.get(curImg.name)?.find(x => x.id === this.lastSelectedId) as ArrowElement;
         if (el && el.type === "arrow") {
           const current = this.getImageCoords(e.clientX, e.clientY);
           if (this.draggedHandleType === "start") {
@@ -657,42 +755,45 @@ export class NodeInspectorModal extends Modal {
         return;
       }
 
-      if (this.isDraggingEl && this.selectedElementId && this.draggedDOMEl) {
+      // ГРУППОВОЕ ПЕРЕТАСКИВАНИЕ
+      if (this.isDraggingEl && this.groupDragStartPositions.size > 0) {
         const curImg = this.images[this.activeIndex];
         if (!curImg) return;
+        const list = this.elementsByImageName.get(curImg.name) || [];
+        const current = this.getImageCoords(e.clientX, e.clientY);
+        const dx = current.x - this.dragStartPoint.x;
+        const dy = current.y - this.dragStartPoint.y;
 
-        const el = this.elementsByImageName.get(curImg.name)?.find(x => x.id === this.selectedElementId);
-        if (el) {
-          const dx = (e.clientX - this.dragStartPoint.x) / this.scale;
-          const dy = (e.clientY - this.dragStartPoint.y) / this.scale;
-
-          if (el.type === "arrow" && this.elStartArrow) {
-            el.x1 = this.elStartArrow.x1 + dx;
-            el.y1 = this.elStartArrow.y1 + dy;
-            el.x2 = this.elStartArrow.x2 + dx;
-            el.y2 = this.elStartArrow.y2 + dy;
-            
-            const svgEl = this.draggedDOMEl as SVGLineElement;
-            svgEl.setAttribute("x1", el.x1.toString());
-            svgEl.setAttribute("y1", el.y1.toString());
-            svgEl.setAttribute("x2", el.x2.toString());
-            svgEl.setAttribute("y2", el.y2.toString());
-            
-            this.svgLayerEl.querySelector(`.mni-arrow-handle[data-handle="start"]`)?.setAttribute("cx", el.x1.toString());
-            this.svgLayerEl.querySelector(`.mni-arrow-handle[data-handle="start"]`)?.setAttribute("cy", el.y1.toString());
-            this.svgLayerEl.querySelector(`.mni-arrow-handle[data-handle="end"]`)?.setAttribute("cx", el.x2.toString());
-            this.svgLayerEl.querySelector(`.mni-arrow-handle[data-handle="end"]`)?.setAttribute("cy", el.y2.toString());
-
-          } else if (el.type !== "arrow") {
-            el.x = this.elStartPos.x + dx;
-            el.y = this.elStartPos.y + dy;
-            this.draggedDOMEl.style.left = `${el.x}px`;
-            this.draggedDOMEl.style.top = `${el.y}px`;
+        this.selectedElementIds.forEach(id => {
+          const el = list.find(x => x.id === id);
+          const start = this.groupDragStartPositions.get(id);
+          if (el && start) {
+            if (el.type === "arrow") {
+              el.x1 = start.x1 + dx; el.y1 = start.y1 + dy;
+              el.x2 = start.x2 + dx; el.y2 = start.y2 + dy;
+              
+              const line = this.svgLayerEl.querySelector(`line[data-id="${id}"]`);
+              if (line) {
+                line.setAttribute("x1", el.x1.toString());
+                line.setAttribute("y1", el.y1.toString());
+                line.setAttribute("x2", el.x2.toString());
+                line.setAttribute("y2", el.y2.toString());
+              }
+            } else {
+              el.x = start.x + dx;
+              el.y = start.y + dy;
+              const div = this.elementsLayerEl.querySelector(`[data-id="${id}"]`) as HTMLElement;
+              if (div) {
+                div.style.left = `${el.x}px`;
+                div.style.top = `${el.y}px`;
+              }
+            }
           }
-        }
+        });
         return;
       }
 
+      // РИСОВАНИЕ
       if (this.isDrawing && this.previewEl) {
         const current = this.getImageCoords(e.clientX, e.clientY);
         
@@ -714,6 +815,7 @@ export class NodeInspectorModal extends Modal {
         return;
       }
 
+      // ПАНОРАМИРОВАНИЕ
       if (this.isPanning && this.activePointers.size === 1) {
         const moveDx = e.clientX - this.startPanPoint.x;
         const moveDy = e.clientY - this.startPanPoint.y;
@@ -723,6 +825,7 @@ export class NodeInspectorModal extends Modal {
         return;
       }
 
+      // ЗУМ
       if (this.activePointers.size === 2) {
         const dist = this.getPinchDistance();
         if (this.prevPinchDistance && dist > 0) {
@@ -737,6 +840,20 @@ export class NodeInspectorModal extends Modal {
     const onPointerEnd = async (e: PointerEvent) => {
       this.activePointers.delete(e.pointerId);
 
+      // Завершение рамки
+      if (this.isMarquee) {
+        this.isMarquee = false;
+        if (this.marqueeEl) {
+          this.marqueeEl.remove();
+          this.marqueeEl = null;
+        }
+        this.updatePropertiesPanel();
+        this.updateDeleteButton();
+        this.renderElements();
+        return;
+      }
+
+      // Завершение маркера
       if (this.isDraggingHandle) {
         this.isDraggingHandle = false;
         this.draggedHandleType = null;
@@ -744,14 +861,15 @@ export class NodeInspectorModal extends Modal {
         return;
       }
 
+      // Завершение перетаскивания группы
       if (this.isDraggingEl) {
         this.isDraggingEl = false;
-        this.draggedDOMEl = null;
-        this.elStartArrow = null;
+        this.groupDragStartPositions.clear();
         if (pointerMoved) this.commitHistory();
         return;
       }
 
+      // Завершение рисования
       if (this.isDrawing && this.previewEl) {
         this.isDrawing = false;
         const current = this.getImageCoords(e.clientX, e.clientY);
@@ -799,6 +917,7 @@ export class NodeInspectorModal extends Modal {
         return;
       }
 
+      // Клик инструментом Текст
       if (this.currentTool === "text" && !pointerMoved) {
         this.spawnTextInput(e.clientX, e.clientY);
       }
@@ -855,7 +974,10 @@ export class NodeInspectorModal extends Modal {
       wrapper.remove();
 
       if (!text) {
-        if (editElementId) this.deleteSelected();
+        if (editElementId) {
+          this.selectedElementIds.delete(editElementId);
+          this.deleteSelected();
+        }
         return;
       }
 
@@ -925,7 +1047,6 @@ export class NodeInspectorModal extends Modal {
       window.removeEventListener("keydown", this.keyHandler);
       this.keyHandler = undefined;
     }
-    // Форсируем финальное сохранение (fire-and-forget, с защитой от ошибок)
     this.manager.saveElements(this.elementsByImageName).catch(() => { /* ignore */ });
     this.contentEl.empty();
   }
