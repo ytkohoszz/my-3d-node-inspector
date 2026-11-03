@@ -22,7 +22,7 @@ export class NodeInspectorModal extends Modal {
   private startTransform: { x: number; y: number } = { x: 0, y: 0 };
 
   // Инструменты
-  private currentTool: ToolType = "pan";
+  private currentTool: ToolType = "select";
   private elementsByImageName: Map<string, CanvasElement[]> = new Map();
   private selectedElementId: string | null = null;
 
@@ -33,6 +33,8 @@ export class NodeInspectorModal extends Modal {
 
   // Перетаскивание (Drag & Drop)
   private isDraggingEl: boolean = false;
+  private isDraggingHandle: boolean = false;
+  private draggedHandleType: "start" | "end" | null = null;
   private dragStartPoint: { x: number; y: number } = { x: 0, y: 0 };
   private elStartPos: { x: number, y: number } = { x: 0, y: 0 };
   private elStartArrow: { x1: number, y1: number, x2: number, y2: number } | null = null;
@@ -110,12 +112,10 @@ export class NodeInspectorModal extends Modal {
 
     this.imgEl = this.layerEl.createEl("img", { cls: "mni-image" });
     
-    // Слой для стрелок (SVG)
     this.svgLayerEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     this.svgLayerEl.classList.add("mni-svg-layer");
     this.layerEl.appendChild(this.svgLayerEl);
     
-    // Слой для фигур и текста (HTML)
     this.elementsLayerEl = this.layerEl.createDiv({ cls: "mni-elements-layer" });
 
     this.imgEl.onload = async () => {
@@ -135,7 +135,7 @@ export class NodeInspectorModal extends Modal {
     this.renderToolbar(container);
     this.bindPointerEvents(this.viewportEl);
     this.bindKeyboardEvents();
-    this.setTool("pan");
+    this.setTool("select"); // По умолчанию - выделение
 
     // 5. Нижняя панель
     if (this.images.length > 1) {
@@ -171,7 +171,6 @@ export class NodeInspectorModal extends Modal {
       this.history.push(currentState);
       this.historyIndex++;
 
-      // Ограничиваем историю 50 шагами (отсекая самые старые)
       if (this.history.length > this.MAX_HISTORY) {
         this.history.shift();
         this.historyIndex--;
@@ -224,8 +223,8 @@ export class NodeInspectorModal extends Modal {
   private renderToolbar(container: HTMLElement) {
     this.toolbarEl = container.createDiv({ cls: "mni-toolbar" });
     const tools: { id: ToolType; icon: string; label: string; hotkey: string }[] = [
-      { id: "pan", icon: "✋", label: "Панорама", hotkey: "V" },
-      { id: "select", icon: "↖️", label: "Выделение", hotkey: "S" },
+      { id: "select", icon: "🖐️", label: "Выделение", hotkey: "V" },
+      { id: "pan", icon: "✥", label: "Панорама", hotkey: "H" },
       { id: "rect", icon: "⬜", label: "Прямоугольник", hotkey: "R" },
       { id: "arrow", icon: "↗️", label: "Стрелка", hotkey: "A" },
       { id: "text", icon: "T", label: "Текст", hotkey: "T" },
@@ -239,9 +238,9 @@ export class NodeInspectorModal extends Modal {
       btn.onclick = () => this.setTool(t.id);
     });
 
-    // Кнопка удаления
+    // Кнопка удаления (красный крестик)
     this.deleteBtn = this.toolbarEl.createEl("button", {
-      cls: `mni-tool-btn mni-tool-delete is-disabled`, text: "🗑️", attr: { title: "Удалить выбранное (Delete)" }
+      cls: `mni-tool-btn mni-tool-delete is-disabled`, text: "✖", attr: { title: "Удалить выбранное (Delete)" }
     });
     this.deleteBtn.disabled = true;
     this.deleteBtn.onclick = () => this.deleteSelected();
@@ -278,7 +277,6 @@ export class NodeInspectorModal extends Modal {
     if (!this.elementsLayerEl) return;
     this.elementsLayerEl.empty();
     
-    // Обновляем SVG defs
     this.svgLayerEl.innerHTML = `
       <defs>
         <marker id="mni-arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
@@ -312,6 +310,25 @@ export class NodeInspectorModal extends Modal {
         if (isSelected) line.classList.add("is-selected");
         
         this.svgLayerEl.appendChild(line);
+
+        // Рисуем маркеры (кружочки) на концах, если стрелка выделена
+        if (isSelected) {
+          const drawHandle = (cx: number, cy: number, type: "start" | "end") => {
+            const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            circle.setAttribute("cx", cx.toString());
+            circle.setAttribute("cy", cy.toString());
+            circle.setAttribute("r", "6");
+            circle.setAttribute("fill", "#e5a158");
+            circle.setAttribute("stroke", "#fff");
+            circle.setAttribute("stroke-width", "2");
+            circle.classList.add("mni-arrow-handle");
+            circle.dataset.handle = type;
+            circle.dataset.id = el.id;
+            this.svgLayerEl.appendChild(circle);
+          };
+          drawHandle(el.x1, el.y1, "start");
+          drawHandle(el.x2, el.y2, "end");
+        }
         return;
       }
 
@@ -374,15 +391,14 @@ export class NodeInspectorModal extends Modal {
 
   // --- СОБЫТИЯ ---
   private bindKeyboardEvents() {
-    // Добавляем слушатель на window, чтобы клавиши работали всегда, когда модалка открыта
     const keyHandler = (e: KeyboardEvent) => {
-      if (!this.containerEl.isConnected) return; // Если окно закрыто — игнорируем
+      if (!this.containerEl.isConnected) return;
       
       const isInput = ["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName);
       if (isInput) return;
 
-      if (e.key.toLowerCase() === "v") this.setTool("pan");
-      if (e.key.toLowerCase() === "s") this.setTool("select");
+      if (e.key.toLowerCase() === "v") this.setTool("select");
+      if (e.key.toLowerCase() === "h") this.setTool("pan");
       if (e.key.toLowerCase() === "r") this.setTool("rect");
       if (e.key.toLowerCase() === "a") this.setTool("arrow");
       if (e.key.toLowerCase() === "t") this.setTool("text");
@@ -432,17 +448,25 @@ export class NodeInspectorModal extends Modal {
     target.addEventListener("pointerdown", (e: PointerEvent) => {
       if ((e.target as HTMLElement).closest(".mni-toolbar, .mni-topbar, .mni-bottombar")) return;
 
-      // Возвращаем фокус в окно при клике по холсту
       this.modalEl.focus();
-
       e.preventDefault();
       target.setPointerCapture(e.pointerId);
       this.activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       pointerMoved = false;
 
-      // --- ЛОГИКА ВЫДЕЛЕНИЯ И ПЕРЕТАСКИВАНИЯ ---
+      // --- ЛОГИКА ВЫДЕЛЕНИЯ, ПЕРЕТАСКИВАНИЯ И МАРКЕРОВ ---
       if (this.currentTool === "select") {
+        const svgTarget = e.target as SVGElement;
         const clickedEl = (e.target as HTMLElement).closest(".mni-el, .mni-el-svg") as HTMLElement | SVGElement;
+
+        if (svgTarget.classList.contains("mni-arrow-handle")) {
+          // Тащим за маркер стрелки
+          this.isDraggingHandle = true;
+          this.draggedHandleType = svgTarget.dataset.handle as "start" | "end";
+          this.selectedElementId = svgTarget.dataset.id || null;
+          return;
+        }
+
         if (clickedEl) {
           this.selectedElementId = clickedEl.dataset.id || null;
           this.updateDeleteButton();
@@ -457,7 +481,7 @@ export class NodeInspectorModal extends Modal {
             this.dragStartPoint = { x: e.clientX, y: e.clientY };
             if (el.type === "arrow") {
               this.elStartArrow = { x1: el.x1, y1: el.y1, x2: el.x2, y2: el.y2 };
-              this.draggedDOMEl = this.svgLayerEl.querySelector(`[data-id="${this.selectedElementId}"]`);
+              this.draggedDOMEl = this.svgLayerEl.querySelector(`line[data-id="${this.selectedElementId}"]`);
             } else {
               this.elStartPos = { x: el.x, y: el.y };
               this.draggedDOMEl = this.elementsLayerEl.querySelector(`[data-id="${this.selectedElementId}"]`);
@@ -503,7 +527,7 @@ export class NodeInspectorModal extends Modal {
       }
 
       // --- ЛОГИКА ПАНОРАМИРОВАНИЯ ---
-      if (this.activePointers.size === 1 && !this.isDraggingEl) {
+      if (this.activePointers.size === 1 && !this.isDraggingEl && !this.isDraggingHandle) {
         this.isPanning = true;
         target.classList.add("is-dragging");
         this.startPanPoint = { x: e.clientX, y: e.clientY };
@@ -522,7 +546,37 @@ export class NodeInspectorModal extends Modal {
         pointerMoved = true;
       }
 
-      // ПЕРЕТАСКИВАНИЕ
+      // ТАЩИМ ЗА МАРКЕР СТРЕЛКИ (Начало или Конец)
+      if (this.isDraggingHandle && this.selectedElementId && this.draggedHandleType) {
+        const curImg = this.images[this.activeIndex];
+        if (!curImg) return;
+        const el = this.elementsByImageName.get(curImg.name)?.find(x => x.id === this.selectedElementId) as ArrowElement;
+        if (el && el.type === "arrow") {
+          const current = this.getImageCoords(e.clientX, e.clientY);
+          if (this.draggedHandleType === "start") {
+            el.x1 = current.x; el.y1 = current.y;
+          } else {
+            el.x2 = current.x; el.y2 = current.y;
+          }
+          
+          // Быстрое обновление SVG без полной перерисовки
+          const line = this.svgLayerEl.querySelector(`line[data-id="${el.id}"]`);
+          if (line) {
+            line.setAttribute("x1", el.x1.toString());
+            line.setAttribute("y1", el.y1.toString());
+            line.setAttribute("x2", el.x2.toString());
+            line.setAttribute("y2", el.y2.toString());
+          }
+          const handle = this.svgLayerEl.querySelector(`.mni-arrow-handle[data-handle="${this.draggedHandleType}"][data-id="${el.id}"]`);
+          if (handle) {
+            handle.setAttribute("cx", (this.draggedHandleType === "start" ? el.x1 : el.x2).toString());
+            handle.setAttribute("cy", (this.draggedHandleType === "start" ? el.y1 : el.y2).toString());
+          }
+        }
+        return;
+      }
+
+      // ПЕРЕТАСКИВАНИЕ ЦЕЛОГО ОБЪЕКТА
       if (this.isDraggingEl && this.selectedElementId && this.draggedDOMEl) {
         const curImg = this.images[this.activeIndex];
         if (!curImg) return;
@@ -543,6 +597,13 @@ export class NodeInspectorModal extends Modal {
             svgEl.setAttribute("y1", el.y1.toString());
             svgEl.setAttribute("x2", el.x2.toString());
             svgEl.setAttribute("y2", el.y2.toString());
+            
+            // Обновляем и маркеры
+            this.svgLayerEl.querySelector(`.mni-arrow-handle[data-handle="start"]`)?.setAttribute("cx", el.x1.toString());
+            this.svgLayerEl.querySelector(`.mni-arrow-handle[data-handle="start"]`)?.setAttribute("cy", el.y1.toString());
+            this.svgLayerEl.querySelector(`.mni-arrow-handle[data-handle="end"]`)?.setAttribute("cx", el.x2.toString());
+            this.svgLayerEl.querySelector(`.mni-arrow-handle[data-handle="end"]`)?.setAttribute("cy", el.y2.toString());
+
           } else if (el.type !== "arrow") {
             el.x = this.elStartPos.x + dx;
             el.y = this.elStartPos.y + dy;
@@ -600,7 +661,15 @@ export class NodeInspectorModal extends Modal {
     const onPointerEnd = async (e: PointerEvent) => {
       this.activePointers.delete(e.pointerId);
 
-      // Завершение перетаскивания
+      // Завершение перетаскивания маркера
+      if (this.isDraggingHandle) {
+        this.isDraggingHandle = false;
+        this.draggedHandleType = null;
+        this.commitHistory();
+        return;
+      }
+
+      // Завершение перетаскивания объекта
       if (this.isDraggingEl) {
         this.isDraggingEl = false;
         this.draggedDOMEl = null;

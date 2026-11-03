@@ -401,3 +401,40 @@
   cursor: not-allowed;
   pointer-events: none;
 }
+
+/* --- НОВЫЕ ПРАВКИ: МАРКЕРЫ СТРЕЛОК И УДАЛЕНИЕ --- */
+
+/* Маркеры на концах стрелок */
+.mni-arrow-handle {
+  pointer-events: all; /* Чтобы за них можно было схватиться */
+  cursor: grab;
+  transition: r 0.1s ease, fill 0.1s ease;
+}
+
+.mni-arrow-handle:hover {
+  r: 8;
+  fill: #ffffff;
+  cursor: grab;
+}
+
+.mni-arrow-handle:active {
+  cursor: grabbing;
+}
+
+/* Кнопка удаления (красный крестик) */
+.mni-tool-delete {
+  color: #ff5c5c !important; /* Ярко-красный цвет */
+  font-size: 1.4rem !important;
+  font-weight: bold;
+}
+
+.mni-tool-delete:hover {
+  background: rgba(255, 92, 92, 0.15) !important;
+  border-color: rgba(255, 92, 92, 0.5) !important;
+}
+
+.mni-tool-delete.is-disabled {
+  opacity: 0.2;
+  cursor: not-allowed;
+  pointer-events: none;
+}
