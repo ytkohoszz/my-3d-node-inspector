@@ -9,7 +9,7 @@ export interface NodePin {
 }
 
 // --- Новые типы для аннотаций (Mini-Excalidraw) ---
-export type ToolType = "pan" | "text" | "rect";
+export type ToolType = "pan" | "select" | "text" | "rect";
 
 export interface CanvasElementBase {
   id: string;

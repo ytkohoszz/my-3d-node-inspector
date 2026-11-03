@@ -10,17 +10,11 @@ export class AnnotationManager {
     this.file = file;
   }
 
-  /**
-   * Загружает аннотации из YAML.
-   * Если находит старые пины (схемы_пины), конвертирует их в текстовые аннотации.
-   */
   async loadElements(imageWidth: number, imageHeight: number): Promise<Map<string, CanvasElement[]>> {
     const cache = this.app.metadataCache.getFileCache(this.file);
     const frontmatter = cache?.frontmatter || {};
     
-    // Новый формат
     const rawAnnotations = (frontmatter["схемы_аннотации"] || {}) as Record<string, unknown>;
-    // Старый формат
     const rawPins = (frontmatter["схемы_пины"] || {}) as Record<string, unknown>;
 
     const resultMap = new Map<string, CanvasElement[]>();
@@ -32,13 +26,11 @@ export class AnnotationManager {
       }
     }
 
-    // Миграция старых пинов в текстовые блоки
     if (Object.keys(rawPins).length > 0) {
       for (const [imgName, pins] of Object.entries(rawPins)) {
         if (Array.isArray(pins) && !resultMap.has(imgName)) {
           const migratedElements: TextElement[] = pins.map((p, idx) => {
             const oldPin = p as NodePin;
-            // Переводим относительные координаты (0..1) в абсолютные пиксели
             return {
               id: `migrated_${idx}_${Date.now()}`,
               type: "text",
@@ -59,11 +51,10 @@ export class AnnotationManager {
 
     if (needsMigration) {
       await this.saveElements(resultMap);
-      // Удаляем старый ключ
       await this.app.fileManager.processFrontMatter(this.file, fm => {
         delete fm["схемы_пины"];
       });
-      new Notice("Старые пины успешно перенесены в новый формат аннотаций!");
+      new Notice("Старые пины перенесены в новый формат!");
     }
 
     return resultMap;
@@ -74,7 +65,6 @@ export class AnnotationManager {
     
     for (const [imgName, list] of elementsMap.entries()) {
       if (list.length > 0) {
-        // Округляем координаты для чистоты YAML
         rawToSave[imgName] = list.map(el => ({
           ...el,
           x: Math.round(el.x),

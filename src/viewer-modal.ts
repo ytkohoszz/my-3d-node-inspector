@@ -1,5 +1,5 @@
-import { App, Modal, TFile, Notice } from "obsidian";
-import { NodeImageItem, CanvasElement, ToolType, RectElement } from "./types";
+import { App, Modal, TFile, Notice, MarkdownRenderer } from "obsidian";
+import { NodeImageItem, CanvasElement, ToolType, RectElement, TextElement } from "./types";
 import { AnnotationManager } from "./pin-manager";
 
 export class NodeInspectorModal extends Modal {
@@ -21,19 +21,33 @@ export class NodeInspectorModal extends Modal {
   private startPanPoint: { x: number; y: number } = { x: 0, y: 0 };
   private startTransform: { x: number; y: number } = { x: 0, y: 0 };
 
-  // Инструменты и аннотации
+  // Инструменты
   private currentTool: ToolType = "pan";
   private elementsByImageName: Map<string, CanvasElement[]> = new Map();
+  private selectedElementId: string | null = null;
+
+  // Рисование
   private isDrawing: boolean = false;
   private drawStartPoint: { x: number; y: number } = { x: 0, y: 0 };
   private previewEl: HTMLElement | null = null;
 
+  // Перетаскивание (Drag & Drop)
+  private isDraggingEl: boolean = false;
+  private dragStartPoint: { x: number; y: number } = { x: 0, y: 0 };
+  private elStartPos: { x: number, y: number } = { x: 0, y: 0 };
+
+  // Undo / Redo
+  private history: string[] = [];
+  private historyIndex: number = -1;
+
   // DOM Элементы
   private layerEl!: HTMLElement;
   private imgEl!: HTMLImageElement;
-  private elementsLayerEl!: HTMLElement; // Новый слой для фигур
+  private elementsLayerEl!: HTMLElement;
   private viewportEl!: HTMLElement;
   private toolbarEl!: HTMLElement;
+  private undoBtn!: HTMLButtonElement;
+  private redoBtn!: HTMLButtonElement;
 
   constructor(app: App, noteFile: TFile, images: NodeImageItem[], title: string, initialIndex: number = 0) {
     super(app);
@@ -59,6 +73,16 @@ export class NodeInspectorModal extends Modal {
 
     const actions = topbar.createDiv({ cls: "mni-top-actions" });
 
+    this.undoBtn = actions.createEl("button", {
+      cls: "mni-btn", text: "↩", attr: { type: "button", title: "Отменить (Ctrl+Z)" }
+    });
+    this.undoBtn.onclick = () => this.undo();
+
+    this.redoBtn = actions.createEl("button", {
+      cls: "mni-btn", text: "↪", attr: { type: "button", title: "Вернуть (Ctrl+Shift+Z)" }
+    });
+    this.redoBtn.onclick = () => this.redo();
+
     const fitBtn = actions.createEl("button", {
       cls: "mni-btn", text: "Вписать", attr: { type: "button", title: "Вписать схему в экран" }
     });
@@ -69,7 +93,7 @@ export class NodeInspectorModal extends Modal {
     });
     closeBtn.onclick = () => this.close();
 
-    // 2. Вьюпорт и слои
+    // 2. Вьюпорт
     this.viewportEl = container.createDiv({ cls: "mni-viewport" });
     this.layerEl = this.viewportEl.createDiv({ cls: "mni-canvas-layer" });
 
@@ -83,21 +107,22 @@ export class NodeInspectorModal extends Modal {
 
     this.imgEl.onload = async () => {
       this.syncLayersSize();
-      // Загружаем и мигрируем данные
-      this.elementsByImageName = await this.manager.loadElements(
-        this.imgEl.naturalWidth || 800, 
-        this.imgEl.naturalHeight || 600
-      );
+      if (this.elementsByImageName.size === 0) {
+        this.elementsByImageName = await this.manager.loadElements(
+          this.imgEl.naturalWidth || 800, 
+          this.imgEl.naturalHeight || 600
+        );
+        this.resetHistory();
+      }
       this.renderElements();
       this.fitToScreen();
     };
     this.loadActiveImage();
 
-    // 3. Панель инструментов (Слева)
     this.renderToolbar(container);
-
-    // 4. Обработка жестов и рисования
     this.bindPointerEvents(this.viewportEl);
+    this.bindKeyboardEvents();
+    this.setTool("pan");
 
     // 5. Нижняя панель
     if (this.images.length > 1) {
@@ -119,37 +144,86 @@ export class NodeInspectorModal extends Modal {
     }
   }
 
+  // --- ИСТОРИЯ ДЕЙСТВИЙ ---
+  private resetHistory() {
+    this.history = [];
+    this.historyIndex = -1;
+    this.commitHistory();
+  }
+
+  private commitHistory() {
+    const currentState = JSON.stringify(Array.from(this.elementsByImageName.entries()));
+    if (this.historyIndex === -1 || this.history[this.historyIndex] !== currentState) {
+      this.history = this.history.slice(0, this.historyIndex + 1);
+      this.history.push(currentState);
+      this.historyIndex++;
+      this.manager.saveElements(this.elementsByImageName);
+      this.updateUndoButtons();
+    }
+  }
+
+  private undo() {
+    if (this.historyIndex > 0) {
+      this.historyIndex--;
+      this.restoreStateFromHistory();
+    }
+  }
+
+  private redo() {
+    if (this.historyIndex < this.history.length - 1) {
+      this.historyIndex++;
+      this.restoreStateFromHistory();
+    }
+  }
+
+  private restoreStateFromHistory() {
+    const stateStr = this.history[this.historyIndex];
+    if (stateStr) {
+      this.elementsByImageName = new Map(JSON.parse(stateStr));
+      this.selectedElementId = null;
+      this.renderElements();
+      this.manager.saveElements(this.elementsByImageName);
+      this.updateUndoButtons();
+    }
+  }
+
+  private updateUndoButtons() {
+    if (this.undoBtn) this.undoBtn.disabled = this.historyIndex <= 0;
+    if (this.redoBtn) this.redoBtn.disabled = this.historyIndex >= this.history.length - 1;
+  }
+
+  // --- ИНСТРУМЕНТЫ ---
   private renderToolbar(container: HTMLElement) {
     this.toolbarEl = container.createDiv({ cls: "mni-toolbar" });
-
     const tools: { id: ToolType; icon: string; label: string; hotkey: string }[] = [
-      { id: "pan", icon: "🖐", label: "Курсор (Pan)", hotkey: "V" },
+      { id: "pan", icon: "🖐", label: "Панорама", hotkey: "V" },
+      { id: "select", icon: "🖱️", label: "Выделение", hotkey: "S" },
       { id: "rect", icon: "⬜", label: "Прямоугольник", hotkey: "R" },
       { id: "text", icon: "T", label: "Текст", hotkey: "T" },
     ];
 
     tools.forEach(t => {
       const btn = this.toolbarEl.createEl("button", {
-        cls: `mni-tool-btn ${this.currentTool === t.id ? "is-active" : ""}`,
-        text: t.icon,
-        attr: { title: `${t.label} (${t.hotkey})` }
+        cls: `mni-tool-btn`, text: t.icon, attr: { title: `${t.label} (${t.hotkey})` }
       });
+      btn.dataset.tool = t.id;
       btn.onclick = () => this.setTool(t.id);
     });
   }
 
   private setTool(tool: ToolType) {
     this.currentTool = tool;
-    this.viewportEl.classList.remove("is-pan-mode", "is-rect-mode", "is-text-mode");
+    this.selectedElementId = null;
+    this.renderElements(); // Снять выделение
+    this.viewportEl.classList.remove("is-pan-mode", "is-rect-mode", "is-text-mode", "is-select-mode");
     this.viewportEl.classList.add(`is-${tool}-mode`);
     
-    // Обновляем кнопки
-    this.toolbarEl.querySelectorAll(".mni-tool-btn").forEach((btn, idx) => {
-      const tools: ToolType[] = ["pan", "rect", "text"];
-      btn.classList.toggle("is-active", tools[idx] === tool);
+    this.toolbarEl.querySelectorAll(".mni-tool-btn").forEach((btn: HTMLElement) => {
+      btn.classList.toggle("is-active", btn.dataset.tool === tool);
     });
   }
 
+  // --- РЕНДЕР ---
   private syncLayersSize(): void {
     if (!this.imgEl || !this.elementsLayerEl) return;
     const w = this.imgEl.naturalWidth || 800;
@@ -168,46 +242,37 @@ export class NodeInspectorModal extends Modal {
     const elements = this.elementsByImageName.get(curImg.name) || [];
 
     elements.forEach(el => {
+      const isSelected = this.selectedElementId === el.id;
+      const wrapper = this.elementsLayerEl.createDiv({ 
+        cls: `mni-el mni-el-${el.type} ${isSelected ? "is-selected" : ""}` 
+      });
+      wrapper.dataset.id = el.id;
+      
+      wrapper.style.left = `${el.x}px`;
+      wrapper.style.top = `${el.y}px`;
+      wrapper.style.width = `${el.width}px`;
+      wrapper.style.height = `${el.height}px`;
+
       if (el.type === "rect") {
-        const div = this.elementsLayerEl.createDiv({ cls: "mni-el-rect" });
-        div.style.left = `${el.x}px`;
-        div.style.top = `${el.y}px`;
-        div.style.width = `${el.width}px`;
-        div.style.height = `${el.height}px`;
-        div.style.borderColor = el.stroke;
-        div.style.borderWidth = `${el.strokeWidth}px`;
-        div.style.backgroundColor = el.fill;
+        wrapper.style.borderColor = el.stroke;
+        wrapper.style.borderWidth = `${el.strokeWidth}px`;
+        wrapper.style.backgroundColor = el.fill;
       } else if (el.type === "text") {
-        const div = this.elementsLayerEl.createDiv({ cls: "mni-el-text" });
-        div.style.left = `${el.x}px`;
-        div.style.top = `${el.y}px`;
-        div.style.minWidth = `${el.width}px`;
-        div.style.color = el.color;
-        div.style.fontSize = `${el.fontSize}px`;
-        div.textContent = el.text;
-        // TODO: В 3-м этапе заменим на MarkdownRenderer
+        wrapper.style.color = el.color;
+        wrapper.style.fontSize = `${el.fontSize}px`;
+        // Рендерим Markdown!
+        MarkdownRenderer.renderMarkdown(el.text, wrapper, this.noteFile.path, this);
       }
     });
   }
 
-  private async saveAnnotations() {
-    await this.manager.saveElements(this.elementsByImageName);
-  }
-
+  // --- СОХРАНЕНИЕ ---
   private loadActiveImage(): void {
     const cur = this.images[this.activeIndex];
     if (cur && this.imgEl) {
       this.imgEl.src = cur.resourcePath;
-      // При смене картинки перерисовываем аннотации (после загрузки)
-      this.imgEl.onload = async () => {
+      this.imgEl.onload = () => {
         this.syncLayersSize();
-        if (this.elementsByImageName.size === 0) {
-           // Повторная загрузка из YAML, если еще не загружали
-           this.elementsByImageName = await this.manager.loadElements(
-             this.imgEl.naturalWidth || 800, 
-             this.imgEl.naturalHeight || 600
-           );
-        }
         this.renderElements();
         this.fitToScreen();
       };
@@ -236,29 +301,81 @@ export class NodeInspectorModal extends Modal {
     this.applyTransform();
   }
 
+  // --- СОБЫТИЯ ---
+  private bindKeyboardEvents() {
+    this.modalEl.tabIndex = 0;
+    this.modalEl.addEventListener("keydown", (e: KeyboardEvent) => {
+      const isInput = ["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName);
+      if (isInput) return;
+
+      if (e.key === "v" || e.key === "V" || e.key === "s" || e.key === "S") this.setTool(e.key.toLowerCase() === "v" ? "pan" : "select");
+      if (e.key === "r" || e.key === "R") this.setTool("rect");
+      if (e.key === "t" || e.key === "T") this.setTool("text");
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) this.redo();
+        else this.undo();
+      }
+
+      if ((e.key === "Delete" || e.key === "Backspace") && this.selectedElementId) {
+        e.preventDefault();
+        this.deleteSelected();
+      }
+    });
+  }
+
+  private deleteSelected() {
+    const curImg = this.images[this.activeIndex];
+    if (!curImg || !this.selectedElementId) return;
+    const list = this.elementsByImageName.get(curImg.name) || [];
+    this.elementsByImageName.set(curImg.name, list.filter(el => el.id !== this.selectedElementId));
+    this.selectedElementId = null;
+    this.renderElements();
+    this.commitHistory();
+  }
+
   private bindPointerEvents(target: HTMLElement): void {
-    let pointerDownTime = 0;
     let pointerMoved = false;
 
     target.addEventListener("pointerdown", (e: PointerEvent) => {
-      // Клики по тулбару игнорируем
       if ((e.target as HTMLElement).closest(".mni-toolbar, .mni-topbar, .mni-bottombar")) return;
 
       e.preventDefault();
       target.setPointerCapture(e.pointerId);
       this.activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
-      pointerDownTime = Date.now();
       pointerMoved = false;
 
-      if (this.currentTool !== "pan" && this.activePointers.size === 1) {
-        // Начинаем рисовать
+      // --- ЛОГИКА ВЫДЕЛЕНИЯ И ПЕРЕТАСКИВАНИЯ ---
+      if (this.currentTool === "select") {
+        const clickedEl = (e.target as HTMLElement).closest(".mni-el") as HTMLElement;
+        if (clickedEl) {
+          this.selectedElementId = clickedEl.dataset.id || null;
+          this.renderElements();
+          
+          const curImg = this.images[this.activeIndex];
+          const el = this.elementsByImageName.get(curImg.name)?.find(x => x.id === this.selectedElementId);
+          if (el) {
+            this.isDraggingEl = true;
+            this.dragStartPoint = { x: e.clientX, y: e.clientY };
+            this.elStartPos = { x: el.x, y: el.y };
+          }
+          return; // Не начинаем панорамирование
+        } else {
+          this.selectedElementId = null;
+          this.renderElements();
+          // Если кликнули в пустоту - начинаем панорамирование
+        }
+      }
+
+      // --- ЛОГИКА РИСОВАНИЯ ---
+      if (this.currentTool !== "pan" && this.currentTool !== "select" && this.activePointers.size === 1) {
         this.isDrawing = true;
         const coords = this.getImageCoords(e.clientX, e.clientY);
         this.drawStartPoint = coords;
 
         if (this.currentTool === "rect") {
-          this.previewEl = this.elementsLayerEl.createDiv({ cls: "mni-el-rect is-preview" });
+          this.previewEl = this.elementsLayerEl.createDiv({ cls: "mni-el mni-el-rect is-preview" });
           this.previewEl.style.left = `${coords.x}px`;
           this.previewEl.style.top = `${coords.y}px`;
           this.previewEl.style.width = "0px";
@@ -270,8 +387,8 @@ export class NodeInspectorModal extends Modal {
         return;
       }
 
-      // Иначе это Pan (перетаскивание)
-      if (this.activePointers.size === 1) {
+      // --- ЛОГИКА ПАНОРАМИРОВАНИЯ ---
+      if (this.activePointers.size === 1 && !this.isDraggingEl) {
         this.isPanning = true;
         target.classList.add("is-dragging");
         this.startPanPoint = { x: e.clientX, y: e.clientY };
@@ -286,11 +403,25 @@ export class NodeInspectorModal extends Modal {
       if (!this.activePointers.has(e.pointerId)) return;
       this.activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-      const dx = Math.abs(e.clientX - this.startPanPoint.x);
-      const dy = Math.abs(e.clientY - this.startPanPoint.y);
-      if (dx > 4 || dy > 4) pointerMoved = true;
+      if (Math.abs(e.clientX - this.startPanPoint.x) > 4 || Math.abs(e.clientY - this.startPanPoint.y) > 4) {
+        pointerMoved = true;
+      }
 
-      // Рисование прямоугольника
+      // ПЕРЕТАСКИВАНИЕ
+      if (this.isDraggingEl && this.selectedElementId) {
+        const curImg = this.images[this.activeIndex];
+        const el = this.elementsByImageName.get(curImg.name)?.find(x => x.id === this.selectedElementId);
+        if (el) {
+          const dx = (e.clientX - this.dragStartPoint.x) / this.scale;
+          const dy = (e.clientY - this.dragStartPoint.y) / this.scale;
+          el.x = this.elStartPos.x + dx;
+          el.y = this.elStartPos.y + dy;
+          this.renderElements();
+        }
+        return;
+      }
+
+      // РИСОВАНИЕ
       if (this.isDrawing && this.currentTool === "rect" && this.previewEl) {
         const current = this.getImageCoords(e.clientX, e.clientY);
         const width = Math.abs(current.x - this.drawStartPoint.x);
@@ -305,7 +436,7 @@ export class NodeInspectorModal extends Modal {
         return;
       }
 
-      // Панорамирование
+      // ПАНОРАМИРОВАНИЕ
       if (this.isPanning && this.activePointers.size === 1) {
         const moveDx = e.clientX - this.startPanPoint.x;
         const moveDy = e.clientY - this.startPanPoint.y;
@@ -315,7 +446,7 @@ export class NodeInspectorModal extends Modal {
         return;
       }
 
-      // Зум
+      // ЗУМ
       if (this.activePointers.size === 2) {
         const dist = this.getPinchDistance();
         if (this.prevPinchDistance && dist > 0) {
@@ -330,8 +461,15 @@ export class NodeInspectorModal extends Modal {
     const onPointerEnd = async (e: PointerEvent) => {
       this.activePointers.delete(e.pointerId);
 
+      // Завершение перетаскивания
+      if (this.isDraggingEl) {
+        this.isDraggingEl = false;
+        if (pointerMoved) this.commitHistory();
+        return;
+      }
+
+      // Завершение рисования
       if (this.isDrawing && this.currentTool === "rect" && this.previewEl) {
-        // Фиксируем фигуру
         this.isDrawing = false;
         const current = this.getImageCoords(e.clientX, e.clientY);
         const width = Math.abs(current.x - this.drawStartPoint.x);
@@ -339,7 +477,6 @@ export class NodeInspectorModal extends Modal {
         const left = Math.min(current.x, this.drawStartPoint.x);
         const top = Math.min(current.y, this.drawStartPoint.y);
 
-        // Если слишком маленький — отменяем
         if (width > 10 && height > 10) {
           const curImg = this.images[this.activeIndex];
           if (curImg) {
@@ -347,17 +484,12 @@ export class NodeInspectorModal extends Modal {
             const newRect: RectElement = {
               id: `rect_${Date.now()}`,
               type: "rect",
-              x: left,
-              y: top,
-              width: width,
-              height: height,
-              stroke: "#e5a158",
-              strokeWidth: 2,
-              fill: "rgba(229, 161, 88, 0.1)"
+              x: left, y: top, width, height,
+              stroke: "#e5a158", strokeWidth: 2, fill: "rgba(229, 161, 88, 0.1)"
             };
             list.push(newRect);
             this.elementsByImageName.set(curImg.name, list);
-            await this.saveAnnotations();
+            this.commitHistory();
           }
         }
         
@@ -365,6 +497,11 @@ export class NodeInspectorModal extends Modal {
         this.previewEl = null;
         this.renderElements();
         return;
+      }
+
+      // Клик инструментом Текст
+      if (this.currentTool === "text" && !pointerMoved) {
+        this.spawnTextInput(e.clientX, e.clientY);
       }
 
       if (this.activePointers.size < 2) this.prevPinchDistance = null;
@@ -382,7 +519,6 @@ export class NodeInspectorModal extends Modal {
 
     target.addEventListener("pointerup", onPointerEnd);
     target.addEventListener("pointercancel", onPointerEnd);
-
     target.addEventListener("wheel", (e: WheelEvent) => {
       e.preventDefault();
       const factor = e.deltaY < 0 ? 1.12 : 0.89;
@@ -390,11 +526,53 @@ export class NodeInspectorModal extends Modal {
     }, { passive: false });
   }
 
+  // --- ТЕКСТОВЫЙ ИНСТРУМЕНТ ---
+  private spawnTextInput(clientX: number, clientY: number) {
+    const coords = this.getImageCoords(clientX, clientY);
+    const wrapper = this.elementsLayerEl.createDiv({ cls: "mni-el-input-wrapper" });
+    wrapper.style.left = `${coords.x}px`;
+    wrapper.style.top = `${coords.y}px`;
+
+    const textarea = wrapper.createEl("textarea", { cls: "mni-text-input", attr: { placeholder: "Введите текст или [[ссылку]]..." } });
+    textarea.focus();
+
+    const finishEditing = () => {
+      const text = textarea.value.trim();
+      wrapper.remove();
+      if (!text) return;
+
+      const curImg = this.images[this.activeIndex];
+      if (curImg) {
+        const list = this.elementsByImageName.get(curImg.name) || [];
+        const newText: TextElement = {
+          id: `text_${Date.now()}`,
+          type: "text",
+          x: coords.x, y: coords.y, width: 200, height: 40,
+          text, fontSize: 16, color: "#ffffff"
+        };
+        list.push(newText);
+        this.elementsByImageName.set(curImg.name, list);
+        this.commitHistory();
+        this.renderElements();
+      }
+    };
+
+    textarea.addEventListener("blur", finishEditing);
+    textarea.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        textarea.blur();
+      }
+      if (e.key === "Escape") {
+        textarea.value = "";
+        textarea.blur();
+      }
+    });
+  }
+
   private getImageCoords(clientX: number, clientY: number): { x: number, y: number } {
     const rect = this.imgEl.getBoundingClientRect();
-    const x = (clientX - rect.left) / this.scale;
-    const y = (clientY - rect.top) / this.scale;
-    return { x, y };
+    return { x: (clientX - rect.left) / this.scale, y: (clientY - rect.top) / this.scale };
   }
 
   private zoomAtPoint(clientX: number, clientY: number, factor: number): void {
@@ -402,7 +580,6 @@ export class NodeInspectorModal extends Modal {
     const rect = this.viewportEl.getBoundingClientRect();
     const originX = clientX - rect.left;
     const originY = clientY - rect.top;
-
     this.panX = originX - (originX - this.panX) * (nextScale / this.scale);
     this.panY = originY - (originY - this.panY) * (nextScale / this.scale);
     this.scale = nextScale;
@@ -412,9 +589,7 @@ export class NodeInspectorModal extends Modal {
   private getPinchDistance(): number {
     const pts = Array.from(this.activePointers.values());
     if (pts.length < 2 || !pts[0] || !pts[1]) return 0;
-    const dx = pts[0].x - pts[1].x;
-    const dy = pts[0].y - pts[1].y;
-    return Math.sqrt(dx * dx + dy * dy);
+    return Math.sqrt(Math.pow(pts[0].x - pts[1].x, 2) + Math.pow(pts[0].y - pts[1].y, 2));
   }
 
   private getPinchCenter(): { x: number; y: number } {
