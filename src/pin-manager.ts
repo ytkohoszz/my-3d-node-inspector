@@ -4,7 +4,6 @@ import { CanvasElement, NodePin, TextElement } from "./types";
 export class AnnotationManager {
   private app: App;
   private file: TFile;
-  // Очередь сохранений — предотвращает race condition при быстрых правках
   private saveQueue: Promise<void> = Promise.resolve();
 
   constructor(app: App, file: TFile) {
@@ -24,11 +23,22 @@ export class AnnotationManager {
 
     for (const [imgName, elements] of Object.entries(rawAnnotations)) {
       if (Array.isArray(elements)) {
-        resultMap.set(imgName, elements as CanvasElement[]);
+        // Приводим старые стрелки к новому формату (если они были без routing)
+        const typedElements = (elements as CanvasElement[]).map(el => {
+          if (el.type === "arrow" && !el.routing) {
+            return {
+              ...el,
+              routing: "straight",
+              startHead: "none",
+              endHead: "arrow"
+            } as CanvasElement;
+          }
+          return el;
+        });
+        resultMap.set(imgName, typedElements);
       }
     }
 
-    // Миграция старых пинов в текстовые блоки
     if (Object.keys(rawPins).length > 0) {
       for (const [imgName, pins] of Object.entries(rawPins)) {
         if (Array.isArray(pins) && !resultMap.has(imgName)) {
@@ -66,16 +76,20 @@ export class AnnotationManager {
   async saveElements(elementsMap: Map<string, CanvasElement[]>): Promise<void> {
     const rawToSave: Record<string, CanvasElement[]> = {};
     
-    // Делаем снимок данных в момент вызова (защита от параллельных мутаций)
     for (const [imgName, list] of elementsMap.entries()) {
       if (list.length > 0) {
         rawToSave[imgName] = list.map(el => {
           if (el.type === "arrow") {
-            return { 
+            const res: any = { 
               ...el, 
               x1: Math.round(el.x1), y1: Math.round(el.y1), 
               x2: Math.round(el.x2), y2: Math.round(el.y2) 
             };
+            if (el.cx1 !== undefined) res.cx1 = Math.round(el.cx1);
+            if (el.cy1 !== undefined) res.cy1 = Math.round(el.cy1);
+            if (el.cx2 !== undefined) res.cx2 = Math.round(el.cx2);
+            if (el.cy2 !== undefined) res.cy2 = Math.round(el.cy2);
+            return res;
           } else {
             return { 
               ...el, 
@@ -87,9 +101,8 @@ export class AnnotationManager {
       }
     }
 
-    // Цепляем сохранение в очередь: следующий save ждёт предыдущего
     this.saveQueue = this.saveQueue
-      .catch(() => { /* игнорируем предыдущие ошибки, чтобы цепочка не сломалась */ })
+      .catch(() => {})
       .then(async () => {
         await this.app.fileManager.processFrontMatter(this.file, fm => {
           if (Object.keys(rawToSave).length === 0) {

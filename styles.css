@@ -512,3 +512,32 @@
   pointer-events: none;
   z-index: 100;
 }
+
+/* --- СТИЛИ ДЛЯ НОВЫХ ЭЛЕМЕНТОВ (ЭТАП 7) --- */
+
+/* Выпадающие списки в свойствах */
+.mni-prop-select {
+  background: var(--background-primary);
+  color: var(--text-normal);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.mni-prop-select:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+}
+
+/* Голубые ручки для управления кривой Безье */
+.mni-arrow-handle.is-control {
+  fill: #5c8df6 !important;
+  cursor: crosshair;
+}
+
+.mni-arrow-handle.is-control:hover {
+  fill: #8db1ff !important;
+  r: 7;
+}

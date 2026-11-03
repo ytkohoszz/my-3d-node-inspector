@@ -3,8 +3,8 @@ import { TFile } from "obsidian";
 // --- Старые типы (для миграции) ---
 export interface NodePin {
   id: number;
-  x: number; // 0..1
-  y: number; // 0..1
+  x: number;
+  y: number;
   text: string;
 }
 
@@ -38,14 +38,33 @@ export interface RectElement extends CanvasElementBase {
   fill: string;
 }
 
+export type ArrowRouting = "straight" | "curved" | "orthogonal";
+export type ArrowHead = "none" | "arrow";
+export type AnchorType = "top" | "bottom" | "left" | "right";
+
 export interface ArrowElement extends CanvasElementBase {
   type: "arrow";
   x1: number;
   y1: number;
   x2: number;
   y2: number;
+  // Контрольные точки для кривой Безье
+  cx1?: number;
+  cy1?: number;
+  cx2?: number;
+  cy2?: number;
+  
+  routing: ArrowRouting;
+  startHead: ArrowHead;
+  endHead: ArrowHead;
   stroke: string;
   strokeWidth: number;
+
+  // Привязка к блокам
+  startElementId?: string;
+  startAnchor?: AnchorType;
+  endElementId?: string;
+  endAnchor?: AnchorType;
 }
 
 export type CanvasElement = TextElement | RectElement | ArrowElement;
