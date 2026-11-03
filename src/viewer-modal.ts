@@ -160,7 +160,6 @@ export class NodeInspectorModal extends Modal {
       this.history.push(currentState);
       this.historyIndex++;
 
-      // Ограничиваем историю, чтобы не забивать память
       if (this.history.length > this.MAX_HISTORY) {
         this.history.shift();
         this.historyIndex--;
@@ -380,7 +379,6 @@ export class NodeInspectorModal extends Modal {
             this.isDraggingEl = true;
             this.dragStartPoint = { x: e.clientX, y: e.clientY };
             this.elStartPos = { x: el.x, y: el.y };
-            // Сохраняем ссылку на DOM-элемент для быстрого обновления
             this.draggedDOMEl = this.elementsLayerEl.querySelector(`.mni-el[data-id="${this.selectedElementId}"]`) as HTMLElement;
           }
           return;
@@ -429,7 +427,7 @@ export class NodeInspectorModal extends Modal {
         pointerMoved = true;
       }
 
-      // ПЕРЕТАСКИВАНИЕ (Обновляем только CSS напрямую для плавности)
+      // ПЕРЕТАСКИВАНИЕ
       if (this.isDraggingEl && this.selectedElementId && this.draggedDOMEl) {
         const curImg = this.images[this.activeIndex];
         if (!curImg) return;
@@ -564,7 +562,7 @@ export class NodeInspectorModal extends Modal {
     let coords = this.getImageCoords(clientX, clientY);
 
     if (editElementId) {
-      const existing = list.find(el => el.id === editElementId) as TextElement;
+      const existing = list.find(el => el.id === editElementId) as TextElement | undefined;
       if (existing) {
         initialText = existing.text;
         coords = { x: existing.x, y: existing.y };
@@ -590,7 +588,10 @@ export class NodeInspectorModal extends Modal {
 
       if (editElementId) {
         const existing = list.find(el => el.id === editElementId);
-        if (existing) existing.text = text;
+        // ФИКС ОШИБКИ TS: Проверяем, что это действительно текстовый элемент
+        if (existing && existing.type === "text") {
+          existing.text = text;
+        }
       } else {
         const newText: TextElement = {
           id: `text_${Date.now()}`,
