@@ -9,19 +9,19 @@ export interface NodePin {
 }
 
 // --- Новые типы для аннотаций (Mini-Excalidraw) ---
-export type ToolType = "pan" | "select" | "text" | "rect";
+export type ToolType = "pan" | "select" | "text" | "rect" | "arrow";
 
 export interface CanvasElementBase {
   id: string;
   type: "text" | "rect" | "arrow";
-  x: number; // Абсолютные пиксели относительно картинки
-  y: number;
-  width: number;
-  height: number;
 }
 
 export interface TextElement extends CanvasElementBase {
   type: "text";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
   text: string;
   fontSize: number;
   color: string;
@@ -29,12 +29,26 @@ export interface TextElement extends CanvasElementBase {
 
 export interface RectElement extends CanvasElementBase {
   type: "rect";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
   stroke: string;
   strokeWidth: number;
   fill: string;
 }
 
-export type CanvasElement = TextElement | RectElement;
+export interface ArrowElement extends CanvasElementBase {
+  type: "arrow";
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  stroke: string;
+  strokeWidth: number;
+}
+
+export type CanvasElement = TextElement | RectElement | ArrowElement;
 
 export interface NodeImageItem {
   file: TFile;

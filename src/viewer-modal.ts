@@ -1,5 +1,5 @@
 import { App, Modal, TFile, Notice, MarkdownRenderer, Component } from "obsidian";
-import { NodeImageItem, CanvasElement, ToolType, RectElement, TextElement } from "./types";
+import { NodeImageItem, CanvasElement, ToolType, RectElement, TextElement, ArrowElement } from "./types";
 import { AnnotationManager } from "./pin-manager";
 
 export class NodeInspectorModal extends Modal {
@@ -29,13 +29,14 @@ export class NodeInspectorModal extends Modal {
   // Рисование
   private isDrawing: boolean = false;
   private drawStartPoint: { x: number; y: number } = { x: 0, y: 0 };
-  private previewEl: HTMLElement | null = null;
+  private previewEl: HTMLElement | SVGElement | null = null;
 
   // Перетаскивание (Drag & Drop)
   private isDraggingEl: boolean = false;
   private dragStartPoint: { x: number; y: number } = { x: 0, y: 0 };
   private elStartPos: { x: number, y: number } = { x: 0, y: 0 };
-  private draggedDOMEl: HTMLElement | null = null;
+  private elStartArrow: { x1: number, y1: number, x2: number, y2: number } | null = null;
+  private draggedDOMEl: HTMLElement | SVGElement | null = null;
 
   // Undo / Redo
   private history: string[] = [];
@@ -46,6 +47,7 @@ export class NodeInspectorModal extends Modal {
   private layerEl!: HTMLElement;
   private imgEl!: HTMLImageElement;
   private elementsLayerEl!: HTMLElement;
+  private svgLayerEl!: SVGSVGElement;
   private viewportEl!: HTMLElement;
   private toolbarEl!: HTMLElement;
   private undoBtn!: HTMLButtonElement;
@@ -105,6 +107,13 @@ export class NodeInspectorModal extends Modal {
     }
 
     this.imgEl = this.layerEl.createEl("img", { cls: "mni-image" });
+    
+    // Слой для стрелок (SVG)
+    this.svgLayerEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    this.svgLayerEl.classList.add("mni-svg-layer");
+    this.layerEl.appendChild(this.svgLayerEl);
+    
+    // Слой для фигур и текста (HTML)
     this.elementsLayerEl = this.layerEl.createDiv({ cls: "mni-elements-layer" });
 
     this.imgEl.onload = async () => {
@@ -207,6 +216,7 @@ export class NodeInspectorModal extends Modal {
       { id: "pan", icon: "🖐", label: "Панорама", hotkey: "V" },
       { id: "select", icon: "🖱️", label: "Выделение", hotkey: "S" },
       { id: "rect", icon: "⬜", label: "Прямоугольник", hotkey: "R" },
+      { id: "arrow", icon: "↗️", label: "Стрелка", hotkey: "A" },
       { id: "text", icon: "T", label: "Текст", hotkey: "T" },
     ];
 
@@ -223,7 +233,7 @@ export class NodeInspectorModal extends Modal {
     this.currentTool = tool;
     this.selectedElementId = null;
     this.renderElements();
-    this.viewportEl.classList.remove("is-pan-mode", "is-rect-mode", "is-text-mode", "is-select-mode");
+    this.viewportEl.classList.remove("is-pan-mode", "is-rect-mode", "is-text-mode", "is-select-mode", "is-arrow-mode");
     this.viewportEl.classList.add(`is-${tool}-mode`);
     
     this.toolbarEl.querySelectorAll(".mni-tool-btn").forEach((btn) => {
@@ -239,11 +249,25 @@ export class NodeInspectorModal extends Modal {
     const h = this.imgEl.naturalHeight || 600;
     this.elementsLayerEl.style.width = `${w}px`;
     this.elementsLayerEl.style.height = `${h}px`;
+    this.svgLayerEl.style.width = `${w}px`;
+    this.svgLayerEl.style.height = `${h}px`;
   }
 
   private renderElements(): void {
     if (!this.elementsLayerEl) return;
     this.elementsLayerEl.empty();
+    
+    // Очищаем SVG и добавляем defs для маркера стрелки
+    this.svgLayerEl.innerHTML = `
+      <defs>
+        <marker id="mni-arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#e5a158" />
+        </marker>
+        <marker id="mni-arrowhead-selected" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#ffffff" />
+        </marker>
+      </defs>
+    `;
 
     const curImg = this.images[this.activeIndex];
     if (!curImg) return;
@@ -252,6 +276,24 @@ export class NodeInspectorModal extends Modal {
 
     elements.forEach(el => {
       const isSelected = this.selectedElementId === el.id;
+
+      if (el.type === "arrow") {
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("x1", el.x1.toString());
+        line.setAttribute("y1", el.y1.toString());
+        line.setAttribute("x2", el.x2.toString());
+        line.setAttribute("y2", el.y2.toString());
+        line.setAttribute("stroke", isSelected ? "#ffffff" : el.stroke);
+        line.setAttribute("stroke-width", el.strokeWidth.toString());
+        line.setAttribute("marker-end", isSelected ? "url(#mni-arrowhead-selected)" : "url(#mni-arrowhead)");
+        line.dataset.id = el.id;
+        line.classList.add("mni-el-svg");
+        if (isSelected) line.classList.add("is-selected");
+        
+        this.svgLayerEl.appendChild(line);
+        return;
+      }
+
       const wrapper = this.elementsLayerEl.createDiv({ 
         cls: `mni-el mni-el-${el.type} ${isSelected ? "is-selected" : ""}` 
       });
@@ -316,9 +358,11 @@ export class NodeInspectorModal extends Modal {
       const isInput = ["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName);
       if (isInput) return;
 
-      if (e.key === "v" || e.key === "V" || e.key === "s" || e.key === "S") this.setTool(e.key.toLowerCase() === "v" ? "pan" : "select");
-      if (e.key === "r" || e.key === "R") this.setTool("rect");
-      if (e.key === "t" || e.key === "T") this.setTool("text");
+      if (e.key.toLowerCase() === "v") this.setTool("pan");
+      if (e.key.toLowerCase() === "s") this.setTool("select");
+      if (e.key.toLowerCase() === "r") this.setTool("rect");
+      if (e.key.toLowerCase() === "a") this.setTool("arrow");
+      if (e.key.toLowerCase() === "t") this.setTool("text");
 
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
@@ -346,7 +390,6 @@ export class NodeInspectorModal extends Modal {
   private bindPointerEvents(target: HTMLElement): void {
     let pointerMoved = false;
 
-    // Двойной клик для редактирования текста
     target.addEventListener("dblclick", (e: MouseEvent) => {
       if (this.currentTool !== "select") return;
       const clickedEl = (e.target as HTMLElement).closest(".mni-el-text") as HTMLElement;
@@ -366,7 +409,7 @@ export class NodeInspectorModal extends Modal {
 
       // --- ЛОГИКА ВЫДЕЛЕНИЯ И ПЕРЕТАСКИВАНИЯ ---
       if (this.currentTool === "select") {
-        const clickedEl = (e.target as HTMLElement).closest(".mni-el") as HTMLElement;
+        const clickedEl = (e.target as HTMLElement).closest(".mni-el, .mni-el-svg") as HTMLElement | SVGElement;
         if (clickedEl) {
           this.selectedElementId = clickedEl.dataset.id || null;
           this.renderElements();
@@ -378,8 +421,13 @@ export class NodeInspectorModal extends Modal {
           if (el) {
             this.isDraggingEl = true;
             this.dragStartPoint = { x: e.clientX, y: e.clientY };
-            this.elStartPos = { x: el.x, y: el.y };
-            this.draggedDOMEl = this.elementsLayerEl.querySelector(`.mni-el[data-id="${this.selectedElementId}"]`) as HTMLElement;
+            if (el.type === "arrow") {
+              this.elStartArrow = { x1: el.x1, y1: el.y1, x2: el.x2, y2: el.y2 };
+              this.draggedDOMEl = this.svgLayerEl.querySelector(`[data-id="${this.selectedElementId}"]`);
+            } else {
+              this.elStartPos = { x: el.x, y: el.y };
+              this.draggedDOMEl = this.elementsLayerEl.querySelector(`[data-id="${this.selectedElementId}"]`);
+            }
           }
           return;
         } else {
@@ -403,6 +451,18 @@ export class NodeInspectorModal extends Modal {
           this.previewEl.style.borderColor = "#e5a158";
           this.previewEl.style.borderWidth = "2px";
           this.previewEl.style.backgroundColor = "rgba(229, 161, 88, 0.1)";
+        } else if (this.currentTool === "arrow") {
+          const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+          line.setAttribute("x1", coords.x.toString());
+          line.setAttribute("y1", coords.y.toString());
+          line.setAttribute("x2", coords.x.toString());
+          line.setAttribute("y2", coords.y.toString());
+          line.setAttribute("stroke", "#e5a158");
+          line.setAttribute("stroke-width", "2");
+          line.setAttribute("marker-end", "url(#mni-arrowhead)");
+          line.classList.add("mni-el-svg-preview");
+          this.svgLayerEl.appendChild(line);
+          this.previewEl = line;
         }
         return;
       }
@@ -436,28 +496,47 @@ export class NodeInspectorModal extends Modal {
         if (el) {
           const dx = (e.clientX - this.dragStartPoint.x) / this.scale;
           const dy = (e.clientY - this.dragStartPoint.y) / this.scale;
-          
-          el.x = this.elStartPos.x + dx;
-          el.y = this.elStartPos.y + dy;
-          
-          this.draggedDOMEl.style.left = `${el.x}px`;
-          this.draggedDOMEl.style.top = `${el.y}px`;
+
+          if (el.type === "arrow" && this.elStartArrow) {
+            el.x1 = this.elStartArrow.x1 + dx;
+            el.y1 = this.elStartArrow.y1 + dy;
+            el.x2 = this.elStartArrow.x2 + dx;
+            el.y2 = this.elStartArrow.y2 + dy;
+            
+            const svgEl = this.draggedDOMEl as SVGLineElement;
+            svgEl.setAttribute("x1", el.x1.toString());
+            svgEl.setAttribute("y1", el.y1.toString());
+            svgEl.setAttribute("x2", el.x2.toString());
+            svgEl.setAttribute("y2", el.y2.toString());
+          } else if (el.type !== "arrow") {
+            el.x = this.elStartPos.x + dx;
+            el.y = this.elStartPos.y + dy;
+            this.draggedDOMEl.style.left = `${el.x}px`;
+            this.draggedDOMEl.style.top = `${el.y}px`;
+          }
         }
         return;
       }
 
       // РИСОВАНИЕ
-      if (this.isDrawing && this.currentTool === "rect" && this.previewEl) {
+      if (this.isDrawing && this.previewEl) {
         const current = this.getImageCoords(e.clientX, e.clientY);
-        const width = Math.abs(current.x - this.drawStartPoint.x);
-        const height = Math.abs(current.y - this.drawStartPoint.y);
-        const left = Math.min(current.x, this.drawStartPoint.x);
-        const top = Math.min(current.y, this.drawStartPoint.y);
+        
+        if (this.currentTool === "rect") {
+          const width = Math.abs(current.x - this.drawStartPoint.x);
+          const height = Math.abs(current.y - this.drawStartPoint.y);
+          const left = Math.min(current.x, this.drawStartPoint.x);
+          const top = Math.min(current.y, this.drawStartPoint.y);
 
-        this.previewEl.style.left = `${left}px`;
-        this.previewEl.style.top = `${top}px`;
-        this.previewEl.style.width = `${width}px`;
-        this.previewEl.style.height = `${height}px`;
+          (this.previewEl as HTMLElement).style.left = `${left}px`;
+          (this.previewEl as HTMLElement).style.top = `${top}px`;
+          (this.previewEl as HTMLElement).style.width = `${width}px`;
+          (this.previewEl as HTMLElement).style.height = `${height}px`;
+        } else if (this.currentTool === "arrow") {
+          const line = this.previewEl as SVGLineElement;
+          line.setAttribute("x2", current.x.toString());
+          line.setAttribute("y2", current.y.toString());
+        }
         return;
       }
 
@@ -490,32 +569,50 @@ export class NodeInspectorModal extends Modal {
       if (this.isDraggingEl) {
         this.isDraggingEl = false;
         this.draggedDOMEl = null;
+        this.elStartArrow = null;
         if (pointerMoved) this.commitHistory();
         return;
       }
 
       // Завершение рисования
-      if (this.isDrawing && this.currentTool === "rect" && this.previewEl) {
+      if (this.isDrawing && this.previewEl) {
         this.isDrawing = false;
         const current = this.getImageCoords(e.clientX, e.clientY);
-        const width = Math.abs(current.x - this.drawStartPoint.x);
-        const height = Math.abs(current.y - this.drawStartPoint.y);
-        const left = Math.min(current.x, this.drawStartPoint.x);
-        const top = Math.min(current.y, this.drawStartPoint.y);
+        const curImg = this.images[this.activeIndex];
+        
+        if (curImg) {
+          const list = this.elementsByImageName.get(curImg.name) || [];
+          if (this.currentTool === "rect") {
+            const width = Math.abs(current.x - this.drawStartPoint.x);
+            const height = Math.abs(current.y - this.drawStartPoint.y);
+            const left = Math.min(current.x, this.drawStartPoint.x);
+            const top = Math.min(current.y, this.drawStartPoint.y);
 
-        if (width > 10 && height > 10) {
-          const curImg = this.images[this.activeIndex];
-          if (curImg) {
-            const list = this.elementsByImageName.get(curImg.name) || [];
-            const newRect: RectElement = {
-              id: `rect_${Date.now()}`,
-              type: "rect",
-              x: left, y: top, width, height,
-              stroke: "#e5a158", strokeWidth: 2, fill: "rgba(229, 161, 88, 0.1)"
-            };
-            list.push(newRect);
-            this.elementsByImageName.set(curImg.name, list);
-            this.commitHistory();
+            if (width > 10 && height > 10) {
+              const newRect: RectElement = {
+                id: `rect_${Date.now()}`,
+                type: "rect",
+                x: left, y: top, width, height,
+                stroke: "#e5a158", strokeWidth: 2, fill: "rgba(229, 161, 88, 0.1)"
+              };
+              list.push(newRect);
+              this.elementsByImageName.set(curImg.name, list);
+              this.commitHistory();
+            }
+          } else if (this.currentTool === "arrow") {
+            const dist = Math.sqrt(Math.pow(current.x - this.drawStartPoint.x, 2) + Math.pow(current.y - this.drawStartPoint.y, 2));
+            if (dist > 10) {
+              const newArrow: ArrowElement = {
+                id: `arrow_${Date.now()}`,
+                type: "arrow",
+                x1: this.drawStartPoint.x, y1: this.drawStartPoint.y,
+                x2: current.x, y2: current.y,
+                stroke: "#e5a158", strokeWidth: 2
+              };
+              list.push(newArrow);
+              this.elementsByImageName.set(curImg.name, list);
+              this.commitHistory();
+            }
           }
         }
         
@@ -588,7 +685,6 @@ export class NodeInspectorModal extends Modal {
 
       if (editElementId) {
         const existing = list.find(el => el.id === editElementId);
-        // ФИКС ОШИБКИ TS: Проверяем, что это действительно текстовый элемент
         if (existing && existing.type === "text") {
           existing.text = text;
         }

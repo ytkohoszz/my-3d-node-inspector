@@ -65,13 +65,21 @@ export class AnnotationManager {
     
     for (const [imgName, list] of elementsMap.entries()) {
       if (list.length > 0) {
-        rawToSave[imgName] = list.map(el => ({
-          ...el,
-          x: Math.round(el.x),
-          y: Math.round(el.y),
-          width: Math.round(el.width),
-          height: Math.round(el.height)
-        }));
+        rawToSave[imgName] = list.map(el => {
+          if (el.type === "arrow") {
+            return { 
+              ...el, 
+              x1: Math.round(el.x1), y1: Math.round(el.y1), 
+              x2: Math.round(el.x2), y2: Math.round(el.y2) 
+            };
+          } else {
+            return { 
+              ...el, 
+              x: Math.round(el.x), y: Math.round(el.y), 
+              width: Math.round(el.width), height: Math.round(el.height) 
+            };
+          }
+        });
       }
     }
 

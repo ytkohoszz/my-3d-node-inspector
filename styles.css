@@ -357,3 +357,31 @@
 .is-select-mode .mni-el {
   cursor: move;
 }
+
+/* --- СТИЛИ ДЛЯ СТРЕЛОК (ЭТАП 5) --- */
+
+.mni-viewport.is-arrow-mode { cursor: crosshair; }
+
+.mni-svg-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none; /* Пропускаем клики сквозь слой */
+  z-index: 10;
+}
+
+.mni-el-svg {
+  pointer-events: stroke; /* Клик срабатывает только по самой линии */
+  cursor: pointer;
+  transition: stroke 0.1s ease, stroke-width 0.1s ease;
+}
+
+.mni-el-svg:hover {
+  stroke-width: 4 !important;
+}
+
+.mni-el-svg-preview {
+  pointer-events: none;
+  opacity: 0.7;
+  stroke-dasharray: 4;
+}
