@@ -1,6 +1,5 @@
 import { TFile } from "obsidian";
 
-// --- Старые типы (для миграции) ---
 export interface NodePin {
   id: number;
   x: number;
@@ -8,8 +7,22 @@ export interface NodePin {
   text: string;
 }
 
-// --- Новые типы для аннотаций (Mini-Excalidraw) ---
 export type ToolType = "pan" | "select" | "text" | "rect" | "arrow";
+
+export type ResizeHandleType = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+export type ArrowHandleType = "start" | "end" | "curve1" | "curve2";
+
+export interface Point {
+  x: number;
+  y: number;
+}
+
+export interface BoundingBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 export interface CanvasElementBase {
   id: string;
@@ -36,7 +49,7 @@ export interface RectElement extends CanvasElementBase {
   stroke: string;
   strokeWidth: number;
   fill: string;
-  borderRadius?: number; // Новое свойство
+  borderRadius?: number;
 }
 
 export type ArrowRouting = "straight" | "curved" | "orthogonal";
@@ -53,7 +66,7 @@ export interface ArrowElement extends CanvasElementBase {
   cy1?: number;
   cx2?: number;
   cy2?: number;
-  
+
   routing: ArrowRouting;
   startHead: ArrowHead;
   endHead: ArrowHead;
@@ -67,6 +80,39 @@ export interface ArrowElement extends CanvasElementBase {
 }
 
 export type CanvasElement = TextElement | RectElement | ArrowElement;
+
+export type ElementDragSnapshot =
+  | {
+      type: "box";
+      x: number;
+      y: number;
+    }
+  | {
+      type: "arrow";
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+      cx1?: number;
+      cy1?: number;
+      cx2?: number;
+      cy2?: number;
+    };
+
+export interface ResizeSnapshot {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  fontSize: number;
+}
+
+export interface SnapAnchorMatch {
+  id: string;
+  anchor: AnchorType;
+  x: number;
+  y: number;
+}
 
 export interface NodeImageItem {
   file: TFile;
