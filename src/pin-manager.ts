@@ -4,6 +4,8 @@ import { CanvasElement, NodePin, TextElement } from "./types";
 export class AnnotationManager {
   private app: App;
   private file: TFile;
+  // Очередь сохранений — предотвращает race condition при быстрых правках
+  private saveQueue: Promise<void> = Promise.resolve();
 
   constructor(app: App, file: TFile) {
     this.app = app;
@@ -26,6 +28,7 @@ export class AnnotationManager {
       }
     }
 
+    // Миграция старых пинов в текстовые блоки
     if (Object.keys(rawPins).length > 0) {
       for (const [imgName, pins] of Object.entries(rawPins)) {
         if (Array.isArray(pins) && !resultMap.has(imgName)) {
@@ -63,6 +66,7 @@ export class AnnotationManager {
   async saveElements(elementsMap: Map<string, CanvasElement[]>): Promise<void> {
     const rawToSave: Record<string, CanvasElement[]> = {};
     
+    // Делаем снимок данных в момент вызова (защита от параллельных мутаций)
     for (const [imgName, list] of elementsMap.entries()) {
       if (list.length > 0) {
         rawToSave[imgName] = list.map(el => {
@@ -83,14 +87,21 @@ export class AnnotationManager {
       }
     }
 
-    try {
-      await this.app.fileManager.processFrontMatter(this.file, fm => {
-        if (Object.keys(rawToSave).length === 0) {
-          delete fm["схемы_аннотации"];
-        } else {
-          fm["схемы_аннотации"] = rawToSave;
-        }
+    // Цепляем сохранение в очередь: следующий save ждёт предыдущего
+    this.saveQueue = this.saveQueue
+      .catch(() => { /* игнорируем предыдущие ошибки, чтобы цепочка не сломалась */ })
+      .then(async () => {
+        await this.app.fileManager.processFrontMatter(this.file, fm => {
+          if (Object.keys(rawToSave).length === 0) {
+            delete fm["схемы_аннотации"];
+          } else {
+            fm["схемы_аннотации"] = rawToSave;
+          }
+        });
       });
+
+    try {
+      await this.saveQueue;
     } catch (e) {
       new Notice("Ошибка сохранения аннотаций: " + (e instanceof Error ? e.message : String(e)));
     }
