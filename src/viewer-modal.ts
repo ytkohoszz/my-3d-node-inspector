@@ -35,10 +35,12 @@ export class NodeInspectorModal extends Modal {
   private isDraggingEl: boolean = false;
   private dragStartPoint: { x: number; y: number } = { x: 0, y: 0 };
   private elStartPos: { x: number, y: number } = { x: 0, y: 0 };
+  private draggedDOMEl: HTMLElement | null = null;
 
   // Undo / Redo
   private history: string[] = [];
   private historyIndex: number = -1;
+  private readonly MAX_HISTORY = 50;
 
   // DOM Элементы
   private layerEl!: HTMLElement;
@@ -157,6 +159,13 @@ export class NodeInspectorModal extends Modal {
       this.history = this.history.slice(0, this.historyIndex + 1);
       this.history.push(currentState);
       this.historyIndex++;
+
+      // Ограничиваем историю, чтобы не забивать память
+      if (this.history.length > this.MAX_HISTORY) {
+        this.history.shift();
+        this.historyIndex--;
+      }
+
       this.manager.saveElements(this.elementsByImageName);
       this.updateUndoButtons();
     }
@@ -261,7 +270,6 @@ export class NodeInspectorModal extends Modal {
       } else if (el.type === "text") {
         wrapper.style.color = el.color;
         wrapper.style.fontSize = `${el.fontSize}px`;
-        // Передаем new Component() для корректной работы в strict mode
         MarkdownRenderer.renderMarkdown(el.text, wrapper, this.noteFile.path, new Component());
       }
     });
@@ -339,6 +347,16 @@ export class NodeInspectorModal extends Modal {
   private bindPointerEvents(target: HTMLElement): void {
     let pointerMoved = false;
 
+    // Двойной клик для редактирования текста
+    target.addEventListener("dblclick", (e: MouseEvent) => {
+      if (this.currentTool !== "select") return;
+      const clickedEl = (e.target as HTMLElement).closest(".mni-el-text") as HTMLElement;
+      if (!clickedEl) return;
+      e.stopPropagation();
+      const id = clickedEl.dataset.id;
+      if (id) this.spawnTextInput(e.clientX, e.clientY, id);
+    });
+
     target.addEventListener("pointerdown", (e: PointerEvent) => {
       if ((e.target as HTMLElement).closest(".mni-toolbar, .mni-topbar, .mni-bottombar")) return;
 
@@ -355,13 +373,15 @@ export class NodeInspectorModal extends Modal {
           this.renderElements();
           
           const curImg = this.images[this.activeIndex];
-          if (!curImg) return; // Защита от undefined
+          if (!curImg) return;
           
           const el = this.elementsByImageName.get(curImg.name)?.find(x => x.id === this.selectedElementId);
           if (el) {
             this.isDraggingEl = true;
             this.dragStartPoint = { x: e.clientX, y: e.clientY };
             this.elStartPos = { x: el.x, y: el.y };
+            // Сохраняем ссылку на DOM-элемент для быстрого обновления
+            this.draggedDOMEl = this.elementsLayerEl.querySelector(`.mni-el[data-id="${this.selectedElementId}"]`) as HTMLElement;
           }
           return;
         } else {
@@ -409,18 +429,21 @@ export class NodeInspectorModal extends Modal {
         pointerMoved = true;
       }
 
-      // ПЕРЕТАСКИВАНИЕ
-      if (this.isDraggingEl && this.selectedElementId) {
+      // ПЕРЕТАСКИВАНИЕ (Обновляем только CSS напрямую для плавности)
+      if (this.isDraggingEl && this.selectedElementId && this.draggedDOMEl) {
         const curImg = this.images[this.activeIndex];
-        if (!curImg) return; // Защита от undefined
+        if (!curImg) return;
 
         const el = this.elementsByImageName.get(curImg.name)?.find(x => x.id === this.selectedElementId);
         if (el) {
           const dx = (e.clientX - this.dragStartPoint.x) / this.scale;
           const dy = (e.clientY - this.dragStartPoint.y) / this.scale;
+          
           el.x = this.elStartPos.x + dx;
           el.y = this.elStartPos.y + dy;
-          this.renderElements();
+          
+          this.draggedDOMEl.style.left = `${el.x}px`;
+          this.draggedDOMEl.style.top = `${el.y}px`;
         }
         return;
       }
@@ -468,6 +491,7 @@ export class NodeInspectorModal extends Modal {
       // Завершение перетаскивания
       if (this.isDraggingEl) {
         this.isDraggingEl = false;
+        this.draggedDOMEl = null;
         if (pointerMoved) this.commitHistory();
         return;
       }
@@ -530,24 +554,44 @@ export class NodeInspectorModal extends Modal {
     }, { passive: false });
   }
 
-  // --- ТЕКСТОВЫЙ ИНСТРУМЕНТ ---
-  private spawnTextInput(clientX: number, clientY: number) {
-    const coords = this.getImageCoords(clientX, clientY);
+  // --- ТЕКСТОВЫЙ ИНСТРУМЕНТ (Создание и Редактирование) ---
+  private spawnTextInput(clientX: number, clientY: number, editElementId?: string) {
+    const curImg = this.images[this.activeIndex];
+    if (!curImg) return;
+    const list = this.elementsByImageName.get(curImg.name) || [];
+
+    let initialText = "";
+    let coords = this.getImageCoords(clientX, clientY);
+
+    if (editElementId) {
+      const existing = list.find(el => el.id === editElementId) as TextElement;
+      if (existing) {
+        initialText = existing.text;
+        coords = { x: existing.x, y: existing.y };
+      }
+    }
+
     const wrapper = this.elementsLayerEl.createDiv({ cls: "mni-el-input-wrapper" });
     wrapper.style.left = `${coords.x}px`;
     wrapper.style.top = `${coords.y}px`;
 
     const textarea = wrapper.createEl("textarea", { cls: "mni-text-input", attr: { placeholder: "Введите текст или [[ссылку]]..." } });
+    textarea.value = initialText;
     textarea.focus();
 
     const finishEditing = () => {
       const text = textarea.value.trim();
       wrapper.remove();
-      if (!text) return;
 
-      const curImg = this.images[this.activeIndex];
-      if (curImg) {
-        const list = this.elementsByImageName.get(curImg.name) || [];
+      if (!text) {
+        if (editElementId) this.deleteSelected();
+        return;
+      }
+
+      if (editElementId) {
+        const existing = list.find(el => el.id === editElementId);
+        if (existing) existing.text = text;
+      } else {
         const newText: TextElement = {
           id: `text_${Date.now()}`,
           type: "text",
@@ -555,10 +599,11 @@ export class NodeInspectorModal extends Modal {
           text, fontSize: 16, color: "#ffffff"
         };
         list.push(newText);
-        this.elementsByImageName.set(curImg.name, list);
-        this.commitHistory();
-        this.renderElements();
       }
+      
+      this.elementsByImageName.set(curImg.name, list);
+      this.commitHistory();
+      this.renderElements();
     };
 
     textarea.addEventListener("blur", finishEditing);

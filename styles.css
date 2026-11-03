@@ -352,3 +352,8 @@
 .mni-dsl-node-text { fill: #f0f2f5; font-size: 11px; font-weight: 600; font-family: var(--font-text); pointer-events: none; }
 .mni-dsl-socket { fill: #a0a5af; stroke: #181a20; stroke-width: 1.5; }
 .mni-dsl-wire { fill: none; stroke-width: 2.2; opacity: 0.85; }
+
+/* Показываем курсор перемещения при наведении на элементы в режиме выделения */
+.is-select-mode .mni-el {
+  cursor: move;
+}
