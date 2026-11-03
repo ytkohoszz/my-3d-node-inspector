@@ -35,7 +35,6 @@ export class NodeInspectorModal extends Modal {
 
   private isDraggingEl: boolean = false;
   private isDraggingHandle: boolean = false;
-  private isDraggingCurveHandle: boolean = false;
   private draggedHandleType: "start" | "end" | "curve1" | "curve2" | null = null;
   private dragStartPoint: { x: number; y: number } = { x: 0, y: 0 };
   private groupDragStartPositions: Map<string, any> = new Map();
@@ -131,7 +130,6 @@ export class NodeInspectorModal extends Modal {
     }
   }
 
-  // --- ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ---
   private async loadCurrentImageAndElements(): Promise<void> {
     const cur = this.images[this.activeIndex];
     if (!cur || !this.imgEl) return;
@@ -205,7 +203,6 @@ export class NodeInspectorModal extends Modal {
     });
   }
 
-  // --- ИСТОРИЯ ---
   private resetHistory() { this.history = []; this.historyIndex = -1; this.commitHistory(); }
 
   private commitHistory() {
@@ -250,7 +247,6 @@ export class NodeInspectorModal extends Modal {
     }
   }
 
-  // --- UI ИНСТРУМЕНТЫ ---
   private renderToolbar(container: HTMLElement) {
     this.toolbarEl = container.createDiv({ cls: "mni-toolbar" });
     const tools: { id: ToolType; icon: string; label: string; hotkey: string }[] = [
@@ -289,7 +285,6 @@ export class NodeInspectorModal extends Modal {
     });
   }
 
-  // --- ПАНЕЛЬ СВОЙСТВ ---
   private updatePropertiesPanel() {
     if (!this.propertiesPanelEl) return;
     this.propertiesPanelEl.empty();
@@ -368,7 +363,6 @@ export class NodeInspectorModal extends Modal {
     }
   }
 
-  // --- РЕНДЕР ---
   private syncLayersSize(): void {
     if (!this.imgEl || !this.elementsLayerEl) return;
     const w = this.imgEl.naturalWidth || 800, h = this.imgEl.naturalHeight || 600;
@@ -384,20 +378,14 @@ export class NodeInspectorModal extends Modal {
       const cy2 = el.cy2 ?? el.y2;
       return `M ${el.x1} ${el.y1} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${el.x2} ${el.y2}`;
     } else if (el.routing === "orthogonal") {
-      // Простая ортогональная маршрутизация
       const midX = (el.x1 + el.x2) / 2;
-      const midY = (el.y1 + el.y2) / 2;
       
-      // Если точки на одной линии, просто рисуем прямую
       if (Math.abs(el.y1 - el.y2) < 5) return `M ${el.x1} ${el.y1} L ${el.x2} ${el.y2}`;
       if (Math.abs(el.x1 - el.x2) < 5) return `M ${el.x1} ${el.y1} L ${el.x2} ${el.y2}`;
 
-      // Изгиб в зависимости от направления (если конец левее начала - делаем Z-образный излом)
       if (el.x2 > el.x1) {
-        // Вправо
         return `M ${el.x1} ${el.y1} L ${midX} ${el.y1} L ${midX} ${el.y2} L ${el.x2} ${el.y2}`;
       } else {
-        // Влево (обходим)
         const offX = Math.max(el.x1, el.x2) + 40;
         return `M ${el.x1} ${el.y1} L ${offX} ${el.y1} L ${offX} ${el.y2} L ${el.x2} ${el.y2}`;
       }
@@ -409,7 +397,6 @@ export class NodeInspectorModal extends Modal {
     if (!this.elementsLayerEl) return;
     this.elementsLayerEl.empty();
     
-    // Markers для наконечников
     this.svgLayerEl.innerHTML = `
       <defs>
         <marker id="mni-head-end" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
@@ -437,15 +424,14 @@ export class NodeInspectorModal extends Modal {
         path.setAttribute("stroke", isSelected ? "#ffffff" : el.stroke);
         path.setAttribute("stroke-width", el.strokeWidth.toString());
         
-        if (el.endHead === "arrow") path.setAttribute("marker-end", isSelected ? "url(#mni-head-end)" : "url(#mni-head-end)");
-        if (el.startHead === "arrow") path.setAttribute("marker-start", isSelected ? "url(#mni-head-start)" : "url(#mni-head-start)");
+        if (el.endHead === "arrow") path.setAttribute("marker-end", "url(#mni-head-end)");
+        if (el.startHead === "arrow") path.setAttribute("marker-start", "url(#mni-head-start)");
 
         path.dataset.id = el.id;
         path.classList.add("mni-el-svg");
         if (isSelected) path.classList.add("is-selected");
         this.svgLayerEl.appendChild(path);
 
-        // Ручки концов стрелки
         if (isSelected) {
           const drawHandle = (cx: number, cy: number, type: any) => {
             const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
@@ -463,7 +449,6 @@ export class NodeInspectorModal extends Modal {
           drawHandle(el.x1, el.y1, "start");
           drawHandle(el.x2, el.y2, "end");
 
-          // Ручки для кривой Безье
           if (el.routing === "curved") {
             const cx1 = el.cx1 ?? (el.x1 + el.x2) / 2;
             const cy1 = el.cy1 ?? el.y1;
@@ -485,7 +470,6 @@ export class NodeInspectorModal extends Modal {
             drawCtrl(cx1, cy1, "curve1");
             drawCtrl(cx2, cy2, "curve2");
 
-            // Линии от концов до контрольных точек для наглядности
             const line1 = document.createElementNS("http://www.w3.org/2000/svg", "line");
             line1.setAttribute("x1", el.x1.toString()); line1.setAttribute("y1", el.y1.toString());
             line1.setAttribute("x2", cx1.toString()); line1.setAttribute("y2", cy1.toString());
@@ -537,7 +521,6 @@ export class NodeInspectorModal extends Modal {
     this.applyTransform();
   }
 
-  // --- СОБЫТИЯ ---
   private bindKeyboardEvents() {
     this.keyHandler = (e: KeyboardEvent) => {
       if (!this.containerEl.isConnected) return;
@@ -740,7 +723,6 @@ export class NodeInspectorModal extends Modal {
         return;
       }
 
-      // ТАЩИМ ЗА РУЧКУ (концы или безье)
       if (this.isDraggingHandle && this.lastSelectedId && this.draggedHandleType) {
         const curImg = this.images[this.activeIndex];
         if (!curImg) return;
@@ -751,18 +733,21 @@ export class NodeInspectorModal extends Modal {
           if (this.draggedHandleType === "start") {
             el.x1 = current.x; el.y1 = current.y;
             
-            // Магнитная привязка
+            // ИСПРАВЛЕНИЕ: Используем for...of вместо forEach для поиска ближайшей точки
             const rects = (this.elementsByImageName.get(curImg.name) || []).filter(x => x.type === "rect") as RectElement[];
-            let bestDist = 30; // 30px радиус магнита
+            let bestDist = 30;
             let bestAnchor: {id: string, anchor: AnchorType, x: number, y: number} | null = null;
 
-            rects.forEach(r => {
-              (["top", "bottom", "left", "right"] as AnchorType[]).forEach(anc => {
+            for (const r of rects) {
+              for (const anc of ["top", "bottom", "left", "right"] as AnchorType[]) {
                 const pt = this.getAnchorPoint(r, anc);
                 const dist = Math.hypot(current.x - pt.x, current.y - pt.y);
-                if (dist < bestDist) { bestDist = dist; bestAnchor = { id: r.id, anchor: anc, x: pt.x, y: pt.y }; }
-              });
-            });
+                if (dist < bestDist) { 
+                  bestDist = dist; 
+                  bestAnchor = { id: r.id, anchor: anc, x: pt.x, y: pt.y }; 
+                }
+              }
+            }
 
             if (bestAnchor) {
               el.x1 = bestAnchor.x; el.y1 = bestAnchor.y;
@@ -774,18 +759,20 @@ export class NodeInspectorModal extends Modal {
           } else if (this.draggedHandleType === "end") {
             el.x2 = current.x; el.y2 = current.y;
             
-            // Магнитная привязка
             const rects = (this.elementsByImageName.get(curImg.name) || []).filter(x => x.type === "rect") as RectElement[];
             let bestDist = 30;
             let bestAnchor: {id: string, anchor: AnchorType, x: number, y: number} | null = null;
 
-            rects.forEach(r => {
-              (["top", "bottom", "left", "right"] as AnchorType[]).forEach(anc => {
+            for (const r of rects) {
+              for (const anc of ["top", "bottom", "left", "right"] as AnchorType[]) {
                 const pt = this.getAnchorPoint(r, anc);
                 const dist = Math.hypot(current.x - pt.x, current.y - pt.y);
-                if (dist < bestDist) { bestDist = dist; bestAnchor = { id: r.id, anchor: anc, x: pt.x, y: pt.y }; }
-              });
-            });
+                if (dist < bestDist) { 
+                  bestDist = dist; 
+                  bestAnchor = { id: r.id, anchor: anc, x: pt.x, y: pt.y }; 
+                }
+              }
+            }
 
             if (bestAnchor) {
               el.x2 = bestAnchor.x; el.y2 = bestAnchor.y;
@@ -805,7 +792,6 @@ export class NodeInspectorModal extends Modal {
         return;
       }
 
-      // ГРУППОВОЕ ПЕРЕТАСКИВАНИЕ (Блоки и стрелки)
       if (this.isDraggingEl && this.groupDragStartPositions.size > 0) {
         const curImg = this.images[this.activeIndex];
         if (!curImg) return;
@@ -828,13 +814,11 @@ export class NodeInspectorModal extends Modal {
           }
         });
         
-        // Синхронизируем стрелки, привязанные к перемещенным блокам
         this.syncArrowsToBlocks();
         this.renderElements();
         return;
       }
 
-      // РИСОВАНИЕ (С магнитом на конце)
       if (this.isDrawing && this.previewEl) {
         const current = this.getImageCoords(e.clientX, e.clientY);
         
@@ -848,19 +832,27 @@ export class NodeInspectorModal extends Modal {
         } else if (this.currentTool === "arrow") {
           let snapX = current.x, snapY = current.y;
           
-          // Магнит при создании
           const curImg = this.images[this.activeIndex];
           if (curImg) {
+            // ИСПРАВЛЕНИЕ: for...of
             const rects = (this.elementsByImageName.get(curImg.name) || []).filter(x => x.type === "rect") as RectElement[];
-            let bestDist = 30, bestAnchor = null;
-            rects.forEach(r => {
-              (["top", "bottom", "left", "right"] as AnchorType[]).forEach(anc => {
+            let bestDist = 30;
+            let bestAnchor: {x: number, y: number} | null = null;
+            
+            for (const r of rects) {
+              for (const anc of ["top", "bottom", "left", "right"] as AnchorType[]) {
                 const pt = this.getAnchorPoint(r, anc);
                 const dist = Math.hypot(current.x - pt.x, current.y - pt.y);
-                if (dist < bestDist) { bestDist = dist; bestAnchor = pt; }
-              });
-            });
-            if (bestAnchor) { snapX = bestAnchor.x; snapY = bestAnchor.y; }
+                if (dist < bestDist) { 
+                  bestDist = dist; 
+                  bestAnchor = pt; 
+                }
+              }
+            }
+            
+            if (bestAnchor) { 
+              snapX = bestAnchor.x; snapY = bestAnchor.y; 
+            }
           }
 
           const path = this.previewEl as SVGPathElement;
@@ -935,16 +927,26 @@ export class NodeInspectorModal extends Modal {
               let finalX = current.x, finalY = current.y;
               let endId = undefined, endAnc = undefined;
 
+              // ИСПРАВЛЕНИЕ: for...of
               const rects = list.filter(x => x.type === "rect") as RectElement[];
-              let bestDist = 30, bestAnchor = null;
-              rects.forEach(r => {
-                (["top", "bottom", "left", "right"] as AnchorType[]).forEach(anc => {
+              let bestDist = 30;
+              let bestAnchor: {id: string, anchor: AnchorType, x: number, y: number} | null = null;
+              
+              for (const r of rects) {
+                for (const anc of ["top", "bottom", "left", "right"] as AnchorType[]) {
                   const pt = this.getAnchorPoint(r, anc);
                   const dist = Math.hypot(current.x - pt.x, current.y - pt.y);
-                  if (dist < bestDist) { bestDist = dist; bestAnchor = { id: r.id, anchor: anc, x: pt.x, y: pt.y }; }
-                });
-              });
-              if (bestAnchor) { finalX = bestAnchor.x; finalY = bestAnchor.y; endId = bestAnchor.id; endAnc = bestAnchor.anchor; }
+                  if (dist < bestDist) { 
+                    bestDist = dist; 
+                    bestAnchor = { id: r.id, anchor: anc, x: pt.x, y: pt.y }; 
+                  }
+                }
+              }
+              
+              if (bestAnchor) { 
+                finalX = bestAnchor.x; finalY = bestAnchor.y; 
+                endId = bestAnchor.id; endAnc = bestAnchor.anchor; 
+              }
 
               const newArrow: ArrowElement = {
                 id: `arrow_${Date.now()}`, type: "arrow",
