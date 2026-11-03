@@ -1,34 +1,39 @@
 import { App, Modal, TFile, Notice } from "obsidian";
-import { NodeImageItem, NodePin } from "./types";
+import { NodeImageItem, CanvasElement, ToolType, RectElement } from "./types";
+import { AnnotationManager } from "./pin-manager";
 
 export class NodeInspectorModal extends Modal {
   private noteFile: TFile;
   private images: NodeImageItem[] = [];
   private activeIndex: number = 0;
   private currentTitle: string = "";
+  private manager: AnnotationManager;
 
   // Трансформация холста
   private scale: number = 1;
   private panX: number = 0;
   private panY: number = 0;
 
-  // Жесты Pointer Events
+  // Жесты
   private activePointers: Map<number, { x: number; y: number }> = new Map();
   private prevPinchDistance: number | null = null;
   private isPanning: boolean = false;
   private startPanPoint: { x: number; y: number } = { x: 0, y: 0 };
   private startTransform: { x: number; y: number } = { x: 0, y: 0 };
 
-  // Режим аннотаций-пинов
-  private isPinMode: boolean = false;
-  private pinsByImageName: Map<string, NodePin[]> = new Map();
+  // Инструменты и аннотации
+  private currentTool: ToolType = "pan";
+  private elementsByImageName: Map<string, CanvasElement[]> = new Map();
+  private isDrawing: boolean = false;
+  private drawStartPoint: { x: number; y: number } = { x: 0, y: 0 };
+  private previewEl: HTMLElement | null = null;
 
+  // DOM Элементы
   private layerEl!: HTMLElement;
   private imgEl!: HTMLImageElement;
-  private pinsLayerEl!: HTMLElement;
+  private elementsLayerEl!: HTMLElement; // Новый слой для фигур
   private viewportEl!: HTMLElement;
-  private scaleBadgeEl!: HTMLElement;
-  private pinToggleBtn!: HTMLElement;
+  private toolbarEl!: HTMLElement;
 
   constructor(app: App, noteFile: TFile, images: NodeImageItem[], title: string, initialIndex: number = 0) {
     super(app);
@@ -36,14 +41,13 @@ export class NodeInspectorModal extends Modal {
     this.images = images;
     this.currentTitle = title;
     this.activeIndex = Math.max(0, Math.min(images.length - 1, initialIndex));
+    this.manager = new AnnotationManager(app, noteFile);
   }
 
   async onOpen(): Promise<void> {
     const { contentEl, modalEl } = this;
     modalEl.addClass("mod-3d-node-inspector");
     contentEl.empty();
-
-    await this.loadPinsFromFrontmatter();
 
     const container = contentEl.createDiv({ cls: "mni-container" });
 
@@ -55,61 +59,47 @@ export class NodeInspectorModal extends Modal {
 
     const actions = topbar.createDiv({ cls: "mni-top-actions" });
 
-    // Кнопка переключения режима пина
-    this.pinToggleBtn = actions.createEl("button", {
-      cls: "mni-btn mni-pin-toggle",
-      text: "📍 Пин",
-      attr: { type: "button", title: "Режим добавления меток-пинов" }
-    });
-    this.pinToggleBtn.onclick = () => this.togglePinMode();
-
-    this.scaleBadgeEl = actions.createEl("button", {
-      cls: "mni-btn",
-      text: "100%",
-      attr: { type: "button", title: "Сбросить масштаб к 100%" }
-    });
-    this.scaleBadgeEl.onclick = () => this.resetScale();
-
     const fitBtn = actions.createEl("button", {
-      cls: "mni-btn",
-      text: "Вписать",
-      attr: { type: "button", title: "Вписать схему в экран" }
+      cls: "mni-btn", text: "Вписать", attr: { type: "button", title: "Вписать схему в экран" }
     });
     fitBtn.onclick = () => this.fitToScreen();
 
     const closeBtn = actions.createEl("button", {
-      cls: "mni-btn is-close",
-      text: "✕",
-      attr: { type: "button", title: "Закрыть инспектор (Esc)" }
+      cls: "mni-btn is-close", text: "✕", attr: { type: "button", title: "Закрыть инспектор (Esc)" }
     });
     closeBtn.onclick = () => this.close();
 
-    // 2. Вьюпорт и трансформируемый слой
+    // 2. Вьюпорт и слои
     this.viewportEl = container.createDiv({ cls: "mni-viewport" });
     this.layerEl = this.viewportEl.createDiv({ cls: "mni-canvas-layer" });
 
     if (this.images.length === 0) {
-      container.createDiv({
-        cls: "mni-empty-msg",
-        text: "В этой заметке не найдено прикреплённых скриншотов нод."
-      });
+      container.createDiv({ cls: "mni-empty-msg", text: "В этой заметке не найдено прикреплённых скриншотов." });
       return;
     }
 
     this.imgEl = this.layerEl.createEl("img", { cls: "mni-image" });
-    this.pinsLayerEl = this.layerEl.createDiv({ cls: "mni-pins-layer" });
+    this.elementsLayerEl = this.layerEl.createDiv({ cls: "mni-elements-layer" });
 
-    this.imgEl.onload = () => {
-      this.syncPinsLayerSize();
-      this.renderPins();
+    this.imgEl.onload = async () => {
+      this.syncLayersSize();
+      // Загружаем и мигрируем данные
+      this.elementsByImageName = await this.manager.loadElements(
+        this.imgEl.naturalWidth || 800, 
+        this.imgEl.naturalHeight || 600
+      );
+      this.renderElements();
       this.fitToScreen();
     };
     this.loadActiveImage();
 
-    // 3. Обработка жестов и кликов для добавления пинов
+    // 3. Панель инструментов (Слева)
+    this.renderToolbar(container);
+
+    // 4. Обработка жестов и рисования
     this.bindPointerEvents(this.viewportEl);
 
-    // 4. Нижняя панель переключения скриншотов
+    // 5. Нижняя панель
     if (this.images.length > 1) {
       const bottombar = container.createDiv({ cls: "mni-bottombar" });
       this.images.forEach((item, idx) => {
@@ -129,199 +119,104 @@ export class NodeInspectorModal extends Modal {
     }
   }
 
-  private async loadPinsFromFrontmatter(): Promise<void> {
-    const cache = this.app.metadataCache.getFileCache(this.noteFile);
-    const rawMap = (cache?.frontmatter?.["схемы_пины"] || {}) as Record<string, unknown>;
-    this.pinsByImageName.clear();
+  private renderToolbar(container: HTMLElement) {
+    this.toolbarEl = container.createDiv({ cls: "mni-toolbar" });
 
-    for (const [imgName, pinsRaw] of Object.entries(rawMap)) {
-      if (Array.isArray(pinsRaw)) {
-        const validPins: NodePin[] = [];
-        pinsRaw.forEach((p, idx) => {
-          if (p && typeof p === "object") {
-            const pinObj = p as Record<string, unknown>;
-            const x = Number(pinObj.x);
-            const y = Number(pinObj.y);
-            const text = String(pinObj.текст || pinObj.text || "").trim();
-            if (Number.isFinite(x) && Number.isFinite(y)) {
-              validPins.push({
-                id: Number(pinObj.id) || idx + 1,
-                x: Math.max(0, Math.min(1, x)),
-                y: Math.max(0, Math.min(1, y)),
-                text: text || "Метка " + (idx + 1)
-              });
-            }
-          }
-        });
-        this.pinsByImageName.set(imgName, validPins);
-      }
-    }
-  }
+    const tools: { id: ToolType; icon: string; label: string; hotkey: string }[] = [
+      { id: "pan", icon: "🖐", label: "Курсор (Pan)", hotkey: "V" },
+      { id: "rect", icon: "⬜", label: "Прямоугольник", hotkey: "R" },
+      { id: "text", icon: "T", label: "Текст", hotkey: "T" },
+    ];
 
-  private async savePinsToFrontmatter(): Promise<void> {
-    const rawToSave: Record<string, Array<{ id: number; x: number; y: number; текст: string }>> = {};
-    for (const [imgName, list] of this.pinsByImageName.entries()) {
-      if (list.length > 0) {
-        rawToSave[imgName] = list.map(p => ({
-          id: p.id,
-          x: Math.round(p.x * 1000) / 1000,
-          y: Math.round(p.y * 1000) / 1000,
-          текст: p.text
-        }));
-      }
-    }
-
-    try {
-      await this.app.fileManager.processFrontMatter(this.noteFile, fm => {
-        if (Object.keys(rawToSave).length === 0) {
-          delete fm["схемы_пины"];
-        } else {
-          fm["схемы_пины"] = rawToSave;
-        }
+    tools.forEach(t => {
+      const btn = this.toolbarEl.createEl("button", {
+        cls: `mni-tool-btn ${this.currentTool === t.id ? "is-active" : ""}`,
+        text: t.icon,
+        attr: { title: `${t.label} (${t.hotkey})` }
       });
-    } catch (e) {
-      new Notice("Ошибка сохранения пинов: " + (e instanceof Error ? e.message : String(e)));
-    }
+      btn.onclick = () => this.setTool(t.id);
+    });
   }
 
-  private togglePinMode(): void {
-    this.isPinMode = !this.isPinMode;
-    this.pinToggleBtn.classList.toggle("is-active", this.isPinMode);
-    this.viewportEl.classList.toggle("is-pin-mode", this.isPinMode);
-    if (this.isPinMode) {
-      new Notice("Тапни в любое место схемы нод, чтобы поставить метку.");
-    }
+  private setTool(tool: ToolType) {
+    this.currentTool = tool;
+    this.viewportEl.classList.remove("is-pan-mode", "is-rect-mode", "is-text-mode");
+    this.viewportEl.classList.add(`is-${tool}-mode`);
+    
+    // Обновляем кнопки
+    this.toolbarEl.querySelectorAll(".mni-tool-btn").forEach((btn, idx) => {
+      const tools: ToolType[] = ["pan", "rect", "text"];
+      btn.classList.toggle("is-active", tools[idx] === tool);
+    });
   }
 
-  private syncPinsLayerSize(): void {
-    if (!this.imgEl || !this.pinsLayerEl) return;
+  private syncLayersSize(): void {
+    if (!this.imgEl || !this.elementsLayerEl) return;
     const w = this.imgEl.naturalWidth || 800;
     const h = this.imgEl.naturalHeight || 600;
-    this.pinsLayerEl.style.width = `${w}px`;
-    this.pinsLayerEl.style.height = `${h}px`;
+    this.elementsLayerEl.style.width = `${w}px`;
+    this.elementsLayerEl.style.height = `${h}px`;
   }
 
-  private renderPins(): void {
-    if (!this.pinsLayerEl) return;
-    this.pinsLayerEl.empty();
+  private renderElements(): void {
+    if (!this.elementsLayerEl) return;
+    this.elementsLayerEl.empty();
 
     const curImg = this.images[this.activeIndex];
     if (!curImg) return;
 
-    const pins = this.pinsByImageName.get(curImg.name) || [];
+    const elements = this.elementsByImageName.get(curImg.name) || [];
 
-    pins.forEach(pin => {
-      const pinWrapper = this.pinsLayerEl.createDiv({ cls: "mni-pin-wrap" });
-      pinWrapper.style.left = `${(pin.x * 100).toFixed(2)}%`;
-      pinWrapper.style.top = `${(pin.y * 100).toFixed(2)}%`;
-
-      const marker = pinWrapper.createEl("button", {
-        cls: "mni-pin-marker",
-        text: String(pin.id),
-        attr: { type: "button", title: pin.text }
-      });
-
-      marker.onclick = (e) => {
-        e.stopPropagation();
-        this.openPinCard(pinWrapper, pin, curImg.name);
-      };
+    elements.forEach(el => {
+      if (el.type === "rect") {
+        const div = this.elementsLayerEl.createDiv({ cls: "mni-el-rect" });
+        div.style.left = `${el.x}px`;
+        div.style.top = `${el.y}px`;
+        div.style.width = `${el.width}px`;
+        div.style.height = `${el.height}px`;
+        div.style.borderColor = el.stroke;
+        div.style.borderWidth = `${el.strokeWidth}px`;
+        div.style.backgroundColor = el.fill;
+      } else if (el.type === "text") {
+        const div = this.elementsLayerEl.createDiv({ cls: "mni-el-text" });
+        div.style.left = `${el.x}px`;
+        div.style.top = `${el.y}px`;
+        div.style.minWidth = `${el.width}px`;
+        div.style.color = el.color;
+        div.style.fontSize = `${el.fontSize}px`;
+        div.textContent = el.text;
+        // TODO: В 3-м этапе заменим на MarkdownRenderer
+      }
     });
   }
 
-  private openPinCard(parentWrapper: HTMLElement, pin: NodePin, imgName: string): void {
-    this.viewportEl.querySelectorAll(".mni-pin-card").forEach(el => el.remove());
-
-    const card = parentWrapper.createDiv({ cls: "mni-pin-card" });
-    card.onclick = (e) => e.stopPropagation();
-
-    const head = card.createDiv({ cls: "mni-pin-card-head" });
-    head.createSpan({ cls: "mni-pin-card-badge", text: `Метка ${pin.id}` });
-
-    const closeCardBtn = head.createEl("button", { cls: "mni-pin-action-btn", text: "✕", attr: { type: "button" } });
-    closeCardBtn.onclick = () => card.remove();
-
-    card.createDiv({ cls: "mni-pin-card-body", text: pin.text });
-
-    const actions = card.createDiv({ cls: "mni-pin-card-actions" });
-
-    const editBtn = actions.createEl("button", { cls: "mni-pin-action-btn", text: "✎ Изменить", attr: { type: "button" } });
-    editBtn.onclick = () => {
-      card.empty();
-      const editInput = card.createEl("textarea", { cls: "mni-pin-edit-input" });
-      editInput.value = pin.text;
-      const actRow = card.createDiv({ cls: "mni-pin-card-actions" });
-
-      const saveBtn = actRow.createEl("button", { cls: "mni-pin-action-btn", text: "Сохранить", attr: { type: "button" } });
-      saveBtn.onclick = async () => {
-        pin.text = editInput.value.trim() || `Метка ${pin.id}`;
-        card.remove();
-        this.renderPins();
-        await this.savePinsToFrontmatter();
-      };
-
-      const cancelBtn = actRow.createEl("button", { cls: "mni-pin-action-btn", text: "Отмена", attr: { type: "button" } });
-      cancelBtn.onclick = () => card.remove();
-      editInput.focus();
-    };
-
-    const delBtn = actions.createEl("button", { cls: "mni-pin-action-btn is-danger", text: "Удалить", attr: { type: "button" } });
-    delBtn.onclick = async () => {
-      const list = this.pinsByImageName.get(imgName) || [];
-      const updated = list.filter(p => p.id !== pin.id);
-      this.pinsByImageName.set(imgName, updated);
-      card.remove();
-      this.renderPins();
-      await this.savePinsToFrontmatter();
-    };
-  }
-
-  private async handleCreatePin(relX: number, relY: number): Promise<void> {
-    const curImg = this.images[this.activeIndex];
-    if (!curImg) return;
-
-    const list = this.pinsByImageName.get(curImg.name) || [];
-    const nextId = list.length > 0 ? Math.max(...list.map(p => p.id)) + 1 : 1;
-
-    const promptModal = new PinPromptModal(this.app, nextId, async (noteText) => {
-      if (!noteText) return;
-      const newPin: NodePin = {
-        id: nextId,
-        x: relX,
-        y: relY,
-        text: noteText
-      };
-      list.push(newPin);
-      this.pinsByImageName.set(curImg.name, list);
-      this.renderPins();
-      await this.savePinsToFrontmatter();
-      this.togglePinMode();
-    });
-    promptModal.open();
+  private async saveAnnotations() {
+    await this.manager.saveElements(this.elementsByImageName);
   }
 
   private loadActiveImage(): void {
     const cur = this.images[this.activeIndex];
     if (cur && this.imgEl) {
       this.imgEl.src = cur.resourcePath;
+      // При смене картинки перерисовываем аннотации (после загрузки)
+      this.imgEl.onload = async () => {
+        this.syncLayersSize();
+        if (this.elementsByImageName.size === 0) {
+           // Повторная загрузка из YAML, если еще не загружали
+           this.elementsByImageName = await this.manager.loadElements(
+             this.imgEl.naturalWidth || 800, 
+             this.imgEl.naturalHeight || 600
+           );
+        }
+        this.renderElements();
+        this.fitToScreen();
+      };
     }
   }
 
   private applyTransform(): void {
     if (!this.layerEl) return;
     this.layerEl.style.transform = `translate3d(${this.panX}px, ${this.panY}px, 0) scale(${this.scale})`;
-    if (this.scaleBadgeEl) {
-      this.scaleBadgeEl.setText(`${Math.round(this.scale * 100)}%`);
-    }
-  }
-
-  private resetScale(): void {
-    this.scale = 1;
-    const rect = this.viewportEl.getBoundingClientRect();
-    const imgW = this.imgEl.naturalWidth || 800;
-    const imgH = this.imgEl.naturalHeight || 600;
-    this.panX = Math.round((rect.width - imgW) / 2);
-    this.panY = Math.round((rect.height - imgH) / 2);
-    this.applyTransform();
   }
 
   private fitToScreen(): void {
@@ -346,7 +241,8 @@ export class NodeInspectorModal extends Modal {
     let pointerMoved = false;
 
     target.addEventListener("pointerdown", (e: PointerEvent) => {
-      if ((e.target as HTMLElement).closest(".mni-pin-card, .mni-pin-marker")) return;
+      // Клики по тулбару игнорируем
+      if ((e.target as HTMLElement).closest(".mni-toolbar, .mni-topbar, .mni-bottombar")) return;
 
       e.preventDefault();
       target.setPointerCapture(e.pointerId);
@@ -355,9 +251,29 @@ export class NodeInspectorModal extends Modal {
       pointerDownTime = Date.now();
       pointerMoved = false;
 
+      if (this.currentTool !== "pan" && this.activePointers.size === 1) {
+        // Начинаем рисовать
+        this.isDrawing = true;
+        const coords = this.getImageCoords(e.clientX, e.clientY);
+        this.drawStartPoint = coords;
+
+        if (this.currentTool === "rect") {
+          this.previewEl = this.elementsLayerEl.createDiv({ cls: "mni-el-rect is-preview" });
+          this.previewEl.style.left = `${coords.x}px`;
+          this.previewEl.style.top = `${coords.y}px`;
+          this.previewEl.style.width = "0px";
+          this.previewEl.style.height = "0px";
+          this.previewEl.style.borderColor = "#e5a158";
+          this.previewEl.style.borderWidth = "2px";
+          this.previewEl.style.backgroundColor = "rgba(229, 161, 88, 0.1)";
+        }
+        return;
+      }
+
+      // Иначе это Pan (перетаскивание)
       if (this.activePointers.size === 1) {
-        this.isPanning = !this.isPinMode;
-        if (this.isPanning) target.classList.add("is-dragging");
+        this.isPanning = true;
+        target.classList.add("is-dragging");
         this.startPanPoint = { x: e.clientX, y: e.clientY };
         this.startTransform = { x: this.panX, y: this.panY };
       } else if (this.activePointers.size === 2) {
@@ -374,6 +290,22 @@ export class NodeInspectorModal extends Modal {
       const dy = Math.abs(e.clientY - this.startPanPoint.y);
       if (dx > 4 || dy > 4) pointerMoved = true;
 
+      // Рисование прямоугольника
+      if (this.isDrawing && this.currentTool === "rect" && this.previewEl) {
+        const current = this.getImageCoords(e.clientX, e.clientY);
+        const width = Math.abs(current.x - this.drawStartPoint.x);
+        const height = Math.abs(current.y - this.drawStartPoint.y);
+        const left = Math.min(current.x, this.drawStartPoint.x);
+        const top = Math.min(current.y, this.drawStartPoint.y);
+
+        this.previewEl.style.left = `${left}px`;
+        this.previewEl.style.top = `${top}px`;
+        this.previewEl.style.width = `${width}px`;
+        this.previewEl.style.height = `${height}px`;
+        return;
+      }
+
+      // Панорамирование
       if (this.isPanning && this.activePointers.size === 1) {
         const moveDx = e.clientX - this.startPanPoint.x;
         const moveDy = e.clientY - this.startPanPoint.y;
@@ -383,6 +315,7 @@ export class NodeInspectorModal extends Modal {
         return;
       }
 
+      // Зум
       if (this.activePointers.size === 2) {
         const dist = this.getPinchDistance();
         if (this.prevPinchDistance && dist > 0) {
@@ -394,37 +327,56 @@ export class NodeInspectorModal extends Modal {
       }
     });
 
-    const onPointerEnd = (e: PointerEvent) => {
-      const wasPinClick = this.isPinMode && !pointerMoved && (Date.now() - pointerDownTime < 350);
+    const onPointerEnd = async (e: PointerEvent) => {
       this.activePointers.delete(e.pointerId);
 
-      if (this.activePointers.size < 2) {
-        this.prevPinchDistance = null;
+      if (this.isDrawing && this.currentTool === "rect" && this.previewEl) {
+        // Фиксируем фигуру
+        this.isDrawing = false;
+        const current = this.getImageCoords(e.clientX, e.clientY);
+        const width = Math.abs(current.x - this.drawStartPoint.x);
+        const height = Math.abs(current.y - this.drawStartPoint.y);
+        const left = Math.min(current.x, this.drawStartPoint.x);
+        const top = Math.min(current.y, this.drawStartPoint.y);
+
+        // Если слишком маленький — отменяем
+        if (width > 10 && height > 10) {
+          const curImg = this.images[this.activeIndex];
+          if (curImg) {
+            const list = this.elementsByImageName.get(curImg.name) || [];
+            const newRect: RectElement = {
+              id: `rect_${Date.now()}`,
+              type: "rect",
+              x: left,
+              y: top,
+              width: width,
+              height: height,
+              stroke: "#e5a158",
+              strokeWidth: 2,
+              fill: "rgba(229, 161, 88, 0.1)"
+            };
+            list.push(newRect);
+            this.elementsByImageName.set(curImg.name, list);
+            await this.saveAnnotations();
+          }
+        }
+        
+        this.previewEl.remove();
+        this.previewEl = null;
+        this.renderElements();
+        return;
       }
+
+      if (this.activePointers.size < 2) this.prevPinchDistance = null;
       if (this.activePointers.size === 1) {
         const remaining = Array.from(this.activePointers.values())[0];
         if (remaining) {
-          this.isPanning = !this.isPinMode;
           this.startPanPoint = { x: remaining.x, y: remaining.y };
           this.startTransform = { x: this.panX, y: this.panY };
         }
       } else if (this.activePointers.size === 0) {
         this.isPanning = false;
         target.classList.remove("is-dragging");
-      }
-
-      if (wasPinClick && this.imgEl) {
-        const rect = this.imgEl.getBoundingClientRect();
-        if (
-          e.clientX >= rect.left &&
-          e.clientX <= rect.right &&
-          e.clientY >= rect.top &&
-          e.clientY <= rect.bottom
-        ) {
-          const relX = (e.clientX - rect.left) / rect.width;
-          const relY = (e.clientY - rect.top) / rect.height;
-          this.handleCreatePin(relX, relY);
-        }
       }
     };
 
@@ -436,6 +388,13 @@ export class NodeInspectorModal extends Modal {
       const factor = e.deltaY < 0 ? 1.12 : 0.89;
       this.zoomAtPoint(e.clientX, e.clientY, factor);
     }, { passive: false });
+  }
+
+  private getImageCoords(clientX: number, clientY: number): { x: number, y: number } {
+    const rect = this.imgEl.getBoundingClientRect();
+    const x = (clientX - rect.left) / this.scale;
+    const y = (clientY - rect.top) / this.scale;
+    return { x, y };
   }
 
   private zoomAtPoint(clientX: number, clientY: number, factor: number): void {
@@ -461,51 +420,7 @@ export class NodeInspectorModal extends Modal {
   private getPinchCenter(): { x: number; y: number } {
     const pts = Array.from(this.activePointers.values());
     if (pts.length < 2 || !pts[0] || !pts[1]) return { x: 0, y: 0 };
-    return {
-      x: (pts[0].x + pts[1].x) / 2,
-      y: (pts[0].y + pts[1].y) / 2
-    };
-  }
-
-  onClose(): void {
-    this.contentEl.empty();
-  }
-}
-
-class PinPromptModal extends Modal {
-  private pinNumber: number;
-  private onSubmit: (text: string) => void;
-
-  constructor(app: App, pinNumber: number, onSubmit: (text: string) => void) {
-    super(app);
-    this.pinNumber = pinNumber;
-    this.onSubmit = onSubmit;
-  }
-
-  onOpen(): void {
-    const { contentEl } = this;
-    contentEl.empty();
-    contentEl.createEl("h3", { text: `📍 Метка ${this.pinNumber} на схеме нод` });
-
-    const input = contentEl.createEl("textarea", {
-      attr: {
-        placeholder: "Например: Сюда подключается профиль кривой…",
-        style: "width: 100%; height: 80px; margin: 10px 0; border-radius: 8px; padding: 8px; border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-normal);"
-      }
-    });
-
-    const actRow = contentEl.createDiv({ attr: { style: "display: flex; gap: 8px; justify-content: flex-end;" } });
-    const saveBtn = actRow.createEl("button", { cls: "mod-cta", text: "Поставить метку" });
-    saveBtn.onclick = () => {
-      const text = input.value.trim();
-      this.close();
-      this.onSubmit(text);
-    };
-
-    const cancelBtn = actRow.createEl("button", { text: "Отмена" });
-    cancelBtn.onclick = () => this.close();
-
-    setTimeout(() => input.focus(), 30);
+    return { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
   }
 
   onClose(): void {

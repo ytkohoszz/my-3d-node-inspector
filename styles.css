@@ -1,4 +1,4 @@
-/* Полноэкранный инспектор нодовых деревьев в стиле Apple HIG и Blender */
+/* Полноэкранный инспектор */
 .modal.mod-3d-node-inspector {
   width: 100vw !important;
   max-width: 100vw !important;
@@ -33,7 +33,7 @@
   touch-action: none;
 }
 
-/* Плавающая верхняя панель управления */
+/* Плавающая верхняя панель */
 .mni-topbar {
   position: absolute;
   top: 14px;
@@ -60,9 +60,7 @@
   max-width: 60%;
 }
 
-.mni-icon {
-  font-size: 1.1rem;
-}
+.mni-icon { font-size: 1.1rem; }
 
 .mni-title {
   font-size: 0.9rem;
@@ -80,7 +78,6 @@
   gap: 8px;
 }
 
-/* Кнопки с touch-зонами >= 44x44 px для iPad */
 .mni-btn {
   min-width: 44px;
   min-height: 44px;
@@ -101,29 +98,11 @@
   transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease;
 }
 
-.mni-btn:hover {
-  background: var(--background-modifier-hover);
-  border-color: var(--interactive-accent);
-}
+.mni-btn:hover { background: var(--background-modifier-hover); border-color: var(--interactive-accent); }
+.mni-btn:active { transform: scale(0.96); }
+.mni-btn.is-close { background: rgba(216, 91, 87, 0.18); border-color: rgba(216, 91, 87, 0.4); color: #d85b57; }
 
-.mni-btn:active {
-  transform: scale(0.96);
-}
-
-.mni-btn.is-close {
-  background: rgba(216, 91, 87, 0.18);
-  border-color: rgba(216, 91, 87, 0.4);
-  color: #d85b57;
-}
-
-.mni-pin-toggle.is-active {
-  background: rgba(229, 161, 88, 0.25);
-  border-color: #e5a158;
-  color: #e5a158;
-  box-shadow: 0 0 12px rgba(229, 161, 88, 0.35);
-}
-
-/* Вьюпорт и трансформируемый слой */
+/* Вьюпорт */
 .mni-viewport {
   position: absolute;
   inset: 0;
@@ -131,13 +110,11 @@
   cursor: grab;
 }
 
-.mni-viewport.is-dragging {
-  cursor: grabbing;
-}
+.mni-viewport.is-pan-mode { cursor: grab; }
+.mni-viewport.is-rect-mode { cursor: crosshair; }
+.mni-viewport.is-text-mode { cursor: text; }
 
-.mni-viewport.is-pin-mode {
-  cursor: crosshair;
-}
+.mni-viewport.is-dragging { cursor: grabbing; }
 
 .mni-canvas-layer {
   position: absolute;
@@ -156,126 +133,80 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-/* Слой интерактивных пинов */
-.mni-pins-layer {
+/* Слой аннотаций */
+.mni-elements-layer {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
+  pointer-events: none; /* Пока пропускаем клики сквозь слой, в след. этапах включим */
+}
+
+/* Фигуры */
+.mni-el-rect {
+  position: absolute;
+  box-sizing: border-box;
+  border-style: solid;
+  border-radius: 2px;
+}
+
+.mni-el-rect.is-preview {
   pointer-events: none;
+  border-style: dashed;
 }
 
-.mni-pin-wrap {
+/* Текст */
+.mni-el-text {
   position: absolute;
-  transform: translate(-50%, -50%);
-  pointer-events: auto;
-  z-index: 20;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 4px;
+  line-height: 1.3;
+  white-space: pre-wrap;
+  word-break: break-word;
+  pointer-events: auto; /* Текст можно будет выделять */
 }
 
-.mni-pin-marker {
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
-  min-height: 28px;
-  border-radius: 50%;
-  background: #e5a158;
-  color: #141619;
-  border: 2px solid #ffffff;
-  font-size: 0.76rem;
-  font-weight: 800;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
-  transition: transform 0.14s ease, box-shadow 0.14s ease;
-  touch-action: manipulation;
-}
-
-.mni-pin-marker:hover {
-  transform: scale(1.18);
-  box-shadow: 0 4px 14px rgba(229, 161, 88, 0.6);
-}
-
-/* Карточка-пояснение по клику на пин */
-.mni-pin-card {
+/* Панель инструментов (Слева) */
+.mni-toolbar {
   position: absolute;
-  top: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
-  min-width: 220px;
-  max-width: 280px;
-  background: rgba(28, 30, 36, 0.95);
-  border: 1px solid var(--background-modifier-border);
-  border-top: 3px solid #e5a158;
-  border-radius: 10px;
-  padding: 10px 12px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
-  z-index: 60;
+  top: 50%;
+  left: 14px;
+  transform: translateY(-50%);
+  z-index: 50;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  user-select: text;
-}
-
-.mni-pin-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-}
-
-.mni-pin-card-badge {
-  font-size: 0.72rem;
-  font-weight: 700;
-  color: #e5a158;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.mni-pin-card-body {
-  font-size: 0.82rem;
-  line-height: 1.35;
-  color: var(--text-normal);
-  word-break: break-word;
-}
-
-.mni-pin-card-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  border-top: 1px solid var(--background-modifier-border);
-  padding-top: 6px;
-}
-
-.mni-pin-action-btn {
-  font-size: 0.72rem;
-  padding: 2px 8px;
-  border-radius: 5px;
-  background: var(--background-primary);
+  padding: 8px;
+  border-radius: 12px;
+  background: rgba(30, 33, 40, 0.85);
   border: 1px solid var(--background-modifier-border);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+.mni-tool-btn {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
   color: var(--text-muted);
+  font-size: 1.2rem;
   cursor: pointer;
+  transition: all 0.12s ease;
 }
 
-.mni-pin-action-btn:hover {
+.mni-tool-btn:hover {
+  background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
 
-.mni-pin-action-btn.is-danger {
-  color: #d85b57;
-  border-color: rgba(216, 91, 87, 0.35);
-}
-
-.mni-pin-edit-input {
-  width: 100%;
-  height: 65px;
-  font-size: 0.82rem;
-  border-radius: 6px;
-  padding: 6px;
-  border: 1px solid var(--background-modifier-border);
-  background: var(--background-primary);
-  color: var(--text-normal);
-  resize: none;
+.mni-tool-btn.is-active {
+  background: rgba(229, 161, 88, 0.2);
+  border-color: #e5a158;
+  color: #e5a158;
 }
 
 /* Нижняя панель */
@@ -356,37 +287,9 @@
   letter-spacing: 0.04em;
 }
 
-.mni-dsl-svg {
-  display: block;
-  user-select: none;
-}
-
-.mni-dsl-node-bg {
-  fill: #2a2d35;
-  stroke: rgba(255, 255, 255, 0.12);
-  stroke-width: 1.2;
-}
-
-.mni-dsl-node-head {
-  fill: #3b3f4a;
-}
-
-.mni-dsl-node-text {
-  fill: #f0f2f5;
-  font-size: 11px;
-  font-weight: 600;
-  font-family: var(--font-text);
-  pointer-events: none;
-}
-
-.mni-dsl-socket {
-  fill: #a0a5af;
-  stroke: #181a20;
-  stroke-width: 1.5;
-}
-
-.mni-dsl-wire {
-  fill: none;
-  stroke-width: 2.2;
-  opacity: 0.85;
-}
+.mni-dsl-svg { display: block; user-select: none; }
+.mni-dsl-node-bg { fill: #2a2d35; stroke: rgba(255, 255, 255, 0.12); stroke-width: 1.2; }
+.mni-dsl-node-head { fill: #3b3f4a; }
+.mni-dsl-node-text { fill: #f0f2f5; font-size: 11px; font-weight: 600; font-family: var(--font-text); pointer-events: none; }
+.mni-dsl-socket { fill: #a0a5af; stroke: #181a20; stroke-width: 1.5; }
+.mni-dsl-wire { fill: none; stroke-width: 2.2; opacity: 0.85; }
