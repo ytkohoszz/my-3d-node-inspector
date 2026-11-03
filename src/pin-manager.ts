@@ -23,15 +23,12 @@ export class AnnotationManager {
 
     for (const [imgName, elements] of Object.entries(rawAnnotations)) {
       if (Array.isArray(elements)) {
-        // Приводим старые стрелки к новому формату (если они были без routing)
         const typedElements = (elements as CanvasElement[]).map(el => {
           if (el.type === "arrow" && !el.routing) {
-            return {
-              ...el,
-              routing: "straight",
-              startHead: "none",
-              endHead: "arrow"
-            } as CanvasElement;
+            return { ...el, routing: "straight", startHead: "none", endHead: "arrow" } as CanvasElement;
+          }
+          if (el.type === "rect" && el.borderRadius === undefined) {
+            return { ...el, borderRadius: 0 } as CanvasElement;
           }
           return el;
         });
@@ -90,11 +87,19 @@ export class AnnotationManager {
             if (el.cx2 !== undefined) res.cx2 = Math.round(el.cx2);
             if (el.cy2 !== undefined) res.cy2 = Math.round(el.cy2);
             return res;
+          } else if (el.type === "rect") {
+            return {
+              ...el,
+              x: Math.round(el.x), y: Math.round(el.y),
+              width: Math.round(el.width), height: Math.round(el.height),
+              borderRadius: el.borderRadius || 0
+            };
           } else {
             return { 
               ...el, 
               x: Math.round(el.x), y: Math.round(el.y), 
-              width: Math.round(el.width), height: Math.round(el.height) 
+              width: Math.round(el.width), height: Math.round(el.height),
+              fontSize: Math.round(el.fontSize)
             };
           }
         });

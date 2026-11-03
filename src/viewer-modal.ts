@@ -35,7 +35,13 @@ export class NodeInspectorModal extends Modal {
 
   private isDraggingEl: boolean = false;
   private isDraggingHandle: boolean = false;
-  private draggedHandleType: "start" | "end" | "curve1" | "curve2" | null = null;
+  private draggedHandleType: string | null = null;
+  
+  // НОВОЕ: Переменные для ресайза
+  private isResizing: boolean = false;
+  private activeResizeHandle: "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | null = null;
+  private resizeStartBBox = { x: 0, y: 0, w: 0, h: 0, fontSize: 0 };
+
   private dragStartPoint: { x: number; y: number } = { x: 0, y: 0 };
   private groupDragStartPositions: Map<string, any> = new Map();
 
@@ -332,6 +338,12 @@ export class NodeInspectorModal extends Modal {
       addColorRow("Обводка", el.stroke, (val) => { el.stroke = val; this.renderElements(); });
       addColorRow("Заливка", el.fill === "transparent" ? "#000000" : el.fill, (val) => { el.fill = val; this.renderElements(); });
       addRangeRow("Толщина", 1, 10, el.strokeWidth, (val) => { el.strokeWidth = val; this.renderElements(); });
+      
+      // Настройка скругления
+      addRangeRow("Скругление", 0, 50, el.borderRadius || 0, (val) => { 
+        el.borderRadius = val; 
+        this.renderElements(); 
+      });
     } else if (el.type === "arrow") {
       addColorRow("Цвет", el.stroke, (val) => { el.stroke = val; this.renderElements(); });
       addRangeRow("Толщина", 1, 10, el.strokeWidth, (val) => { el.strokeWidth = val; this.renderElements(); });
@@ -379,10 +391,8 @@ export class NodeInspectorModal extends Modal {
       return `M ${el.x1} ${el.y1} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${el.x2} ${el.y2}`;
     } else if (el.routing === "orthogonal") {
       const midX = (el.x1 + el.x2) / 2;
-      
       if (Math.abs(el.y1 - el.y2) < 5) return `M ${el.x1} ${el.y1} L ${el.x2} ${el.y2}`;
       if (Math.abs(el.x1 - el.x2) < 5) return `M ${el.x1} ${el.y1} L ${el.x2} ${el.y2}`;
-
       if (el.x2 > el.x1) {
         return `M ${el.x1} ${el.y1} L ${midX} ${el.y1} L ${midX} ${el.y2} L ${el.x2} ${el.y2}`;
       } else {
@@ -432,7 +442,7 @@ export class NodeInspectorModal extends Modal {
         if (isSelected) path.classList.add("is-selected");
         this.svgLayerEl.appendChild(path);
 
-        if (isSelected) {
+        if (isSelected && this.selectedElementIds.size === 1) {
           const drawHandle = (cx: number, cy: number, type: any) => {
             const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
             circle.setAttribute("cx", cx.toString());
@@ -495,10 +505,36 @@ export class NodeInspectorModal extends Modal {
         wrapper.style.borderColor = el.stroke;
         wrapper.style.borderWidth = `${el.strokeWidth}px`;
         wrapper.style.backgroundColor = el.fill;
+        if (el.borderRadius !== undefined) wrapper.style.borderRadius = `${el.borderRadius}px`;
       } else if (el.type === "text") {
         wrapper.style.color = el.color;
         wrapper.style.fontSize = `${el.fontSize}px`;
         MarkdownRenderer.renderMarkdown(el.text, wrapper, this.noteFile.path, new Component());
+      }
+
+      // Если элемент один выделен — рисуем маркеры изменения размера (Resize Handles)
+      if (isSelected && this.selectedElementIds.size === 1) {
+        const handles = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+        handles.forEach(h => {
+          let cx = el.x, cy = el.y;
+          if (h.includes("e")) cx = el.x + el.width;
+          else if (h !== "nw" && h !== "w" && h !== "sw") cx = el.x + el.width / 2;
+          
+          if (h.includes("s")) cy = el.y + el.height;
+          else if (h !== "nw" && h !== "n" && h !== "ne") cy = el.y + el.height / 2;
+
+          const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          circle.setAttribute("cx", cx.toString());
+          circle.setAttribute("cy", cy.toString());
+          circle.setAttribute("r", "5");
+          circle.setAttribute("fill", "#e5a158");
+          circle.setAttribute("stroke", "#fff");
+          circle.setAttribute("stroke-width", "1.5");
+          circle.classList.add("mni-resize-handle");
+          circle.dataset.handle = h;
+          circle.dataset.id = el.id;
+          this.svgLayerEl.appendChild(circle);
+        });
       }
     });
   }
@@ -590,6 +626,28 @@ export class NodeInspectorModal extends Modal {
         const svgTarget = e.target as SVGElement;
         const clickedEl = (e.target as HTMLElement).closest(".mni-el, .mni-el-svg") as HTMLElement | SVGElement;
 
+        // Проверка на клик по маркеру ресайза
+        if (svgTarget.classList.contains("mni-resize-handle")) {
+          this.isResizing = true;
+          this.activeResizeHandle = svgTarget.dataset.handle as any;
+          this.selectedElementIds.clear();
+          this.selectedElementIds.add(svgTarget.dataset.id || "");
+          this.lastSelectedId = svgTarget.dataset.id || null;
+          
+          const curImg = this.images[this.activeIndex];
+          if (curImg) {
+            const el = this.elementsByImageName.get(curImg.name)?.find(x => x.id === this.lastSelectedId);
+            if (el) {
+              this.resizeStartBBox = { 
+                x: el.x, y: el.y, w: el.width, h: el.height, 
+                fontSize: (el as any).fontSize || 16 
+              };
+              this.dragStartPoint = this.getImageCoords(e.clientX, e.clientY);
+            }
+          }
+          return;
+        }
+
         if (svgTarget.classList.contains("mni-arrow-handle")) {
           this.isDraggingHandle = true;
           this.draggedHandleType = svgTarget.dataset.handle as any;
@@ -673,7 +731,7 @@ export class NodeInspectorModal extends Modal {
         return;
       }
 
-      if (this.activePointers.size === 1 && !this.isDraggingEl && !this.isDraggingHandle && !this.isMarquee) {
+      if (this.activePointers.size === 1 && !this.isDraggingEl && !this.isDraggingHandle && !this.isMarquee && !this.isResizing) {
         this.isPanning = true;
         target.classList.add("is-dragging");
         this.startPanPoint = { x: e.clientX, y: e.clientY };
@@ -689,6 +747,60 @@ export class NodeInspectorModal extends Modal {
       this.activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
       if (Math.abs(e.clientX - this.startPanPoint.x) > 4 || Math.abs(e.clientY - this.startPanPoint.y) > 4) pointerMoved = true;
+
+      // РЕСАЙЗ ЭЛЕМЕНТОВ
+      if (this.isResizing && this.lastSelectedId && this.activeResizeHandle) {
+        const curImg = this.images[this.activeIndex];
+        if (!curImg) return;
+        const el = this.elementsByImageName.get(curImg.name)?.find(x => x.id === this.lastSelectedId);
+        if (!el) return;
+
+        const current = this.getImageCoords(e.clientX, e.clientY);
+        const dx = current.x - this.dragStartPoint.x;
+        const dy = current.y - this.dragStartPoint.y;
+
+        let nx = this.resizeStartBBox.x;
+        let ny = this.resizeStartBBox.y;
+        let nw = this.resizeStartBBox.w;
+        let nh = this.resizeStartBBox.h;
+
+        if (this.activeResizeHandle.includes("w")) {
+          nx = this.resizeStartBBox.x + dx;
+          nw = this.resizeStartBBox.w - dx;
+        }
+        if (this.activeResizeHandle.includes("e")) {
+          nw = this.resizeStartBBox.w + dx;
+        }
+        if (this.activeResizeHandle.includes("n")) {
+          ny = this.resizeStartBBox.y + dy;
+          nh = this.resizeStartBBox.h - dy;
+        }
+        if (this.activeResizeHandle.includes("s")) {
+          nh = this.resizeStartBBox.h + dy;
+        }
+
+        // Пропорциональное масштабирование шрифта для текста (только если тянем за угол)
+        if (el.type === "text" && this.activeResizeHandle.length === 2) {
+          const scaleX = nw / this.resizeStartBBox.w;
+          const scaleY = nh / this.resizeStartBBox.h;
+          const scale = Math.max(scaleX, scaleY); // Берем наибольшее изменение
+          
+          el.fontSize = Math.max(8, this.resizeStartBBox.fontSize * scale);
+          nh = this.resizeStartBBox.h * scale; // Пропорционально меняем высоту
+          
+          if (this.activeResizeHandle.includes("n")) {
+            ny = this.resizeStartBBox.y + this.resizeStartBBox.h - nh;
+          }
+        }
+
+        el.x = nx;
+        el.y = ny;
+        el.width = Math.max(20, nw);
+        el.height = Math.max(20, nh);
+
+        this.renderElements();
+        return;
+      }
 
       if (this.isMarquee && this.marqueeEl) {
         const current = this.getImageCoords(e.clientX, e.clientY);
@@ -723,6 +835,7 @@ export class NodeInspectorModal extends Modal {
         return;
       }
 
+      // ... ОСТАЛЬНАЯ ЛОГИКА ДЛЯ СТРЕЛОК (isDraggingHandle) И ПЕРЕТАСКИВАНИЯ (isDraggingEl) ...
       if (this.isDraggingHandle && this.lastSelectedId && this.draggedHandleType) {
         const curImg = this.images[this.activeIndex];
         if (!curImg) return;
@@ -732,8 +845,6 @@ export class NodeInspectorModal extends Modal {
           
           if (this.draggedHandleType === "start") {
             el.x1 = current.x; el.y1 = current.y;
-            
-            // ИСПРАВЛЕНИЕ: Используем for...of вместо forEach для поиска ближайшей точки
             const rects = (this.elementsByImageName.get(curImg.name) || []).filter(x => x.type === "rect") as RectElement[];
             let bestDist = 30;
             let bestAnchor: {id: string, anchor: AnchorType, x: number, y: number} | null = null;
@@ -742,23 +853,13 @@ export class NodeInspectorModal extends Modal {
               for (const anc of ["top", "bottom", "left", "right"] as AnchorType[]) {
                 const pt = this.getAnchorPoint(r, anc);
                 const dist = Math.hypot(current.x - pt.x, current.y - pt.y);
-                if (dist < bestDist) { 
-                  bestDist = dist; 
-                  bestAnchor = { id: r.id, anchor: anc, x: pt.x, y: pt.y }; 
-                }
+                if (dist < bestDist) { bestDist = dist; bestAnchor = { id: r.id, anchor: anc, x: pt.x, y: pt.y }; }
               }
             }
-
-            if (bestAnchor) {
-              el.x1 = bestAnchor.x; el.y1 = bestAnchor.y;
-              el.startElementId = bestAnchor.id; el.startAnchor = bestAnchor.anchor;
-            } else {
-              el.startElementId = undefined; el.startAnchor = undefined;
-            }
-            
+            if (bestAnchor) { el.x1 = bestAnchor.x; el.y1 = bestAnchor.y; el.startElementId = bestAnchor.id; el.startAnchor = bestAnchor.anchor; }
+            else { el.startElementId = undefined; el.startAnchor = undefined; }
           } else if (this.draggedHandleType === "end") {
             el.x2 = current.x; el.y2 = current.y;
-            
             const rects = (this.elementsByImageName.get(curImg.name) || []).filter(x => x.type === "rect") as RectElement[];
             let bestDist = 30;
             let bestAnchor: {id: string, anchor: AnchorType, x: number, y: number} | null = null;
@@ -767,26 +868,16 @@ export class NodeInspectorModal extends Modal {
               for (const anc of ["top", "bottom", "left", "right"] as AnchorType[]) {
                 const pt = this.getAnchorPoint(r, anc);
                 const dist = Math.hypot(current.x - pt.x, current.y - pt.y);
-                if (dist < bestDist) { 
-                  bestDist = dist; 
-                  bestAnchor = { id: r.id, anchor: anc, x: pt.x, y: pt.y }; 
-                }
+                if (dist < bestDist) { bestDist = dist; bestAnchor = { id: r.id, anchor: anc, x: pt.x, y: pt.y }; }
               }
             }
-
-            if (bestAnchor) {
-              el.x2 = bestAnchor.x; el.y2 = bestAnchor.y;
-              el.endElementId = bestAnchor.id; el.endAnchor = bestAnchor.anchor;
-            } else {
-              el.endElementId = undefined; el.endAnchor = undefined;
-            }
-
+            if (bestAnchor) { el.x2 = bestAnchor.x; el.y2 = bestAnchor.y; el.endElementId = bestAnchor.id; el.endAnchor = bestAnchor.anchor; }
+            else { el.endElementId = undefined; el.endAnchor = undefined; }
           } else if (this.draggedHandleType === "curve1") {
             el.cx1 = current.x; el.cy1 = current.y;
           } else if (this.draggedHandleType === "curve2") {
             el.cx2 = current.x; el.cy2 = current.y;
           }
-
           this.renderElements();
         }
         return;
@@ -813,7 +904,6 @@ export class NodeInspectorModal extends Modal {
             }
           }
         });
-        
         this.syncArrowsToBlocks();
         this.renderElements();
         return;
@@ -831,30 +921,20 @@ export class NodeInspectorModal extends Modal {
           (this.previewEl as HTMLElement).style.height = `${height}px`;
         } else if (this.currentTool === "arrow") {
           let snapX = current.x, snapY = current.y;
-          
           const curImg = this.images[this.activeIndex];
           if (curImg) {
-            // ИСПРАВЛЕНИЕ: for...of
             const rects = (this.elementsByImageName.get(curImg.name) || []).filter(x => x.type === "rect") as RectElement[];
             let bestDist = 30;
             let bestAnchor: {x: number, y: number} | null = null;
-            
             for (const r of rects) {
               for (const anc of ["top", "bottom", "left", "right"] as AnchorType[]) {
                 const pt = this.getAnchorPoint(r, anc);
                 const dist = Math.hypot(current.x - pt.x, current.y - pt.y);
-                if (dist < bestDist) { 
-                  bestDist = dist; 
-                  bestAnchor = pt; 
-                }
+                if (dist < bestDist) { bestDist = dist; bestAnchor = pt; }
               }
             }
-            
-            if (bestAnchor) { 
-              snapX = bestAnchor.x; snapY = bestAnchor.y; 
-            }
+            if (bestAnchor) { snapX = bestAnchor.x; snapY = bestAnchor.y; }
           }
-
           const path = this.previewEl as SVGPathElement;
           path.setAttribute("d", `M ${this.drawStartPoint.x} ${this.drawStartPoint.y} L ${snapX} ${snapY}`);
         }
@@ -881,6 +961,13 @@ export class NodeInspectorModal extends Modal {
 
     const onPointerEnd = async (e: PointerEvent) => {
       this.activePointers.delete(e.pointerId);
+
+      if (this.isResizing) {
+        this.isResizing = false;
+        this.activeResizeHandle = null;
+        this.commitHistory();
+        return;
+      }
 
       if (this.isMarquee) {
         this.isMarquee = false;
@@ -916,7 +1003,7 @@ export class NodeInspectorModal extends Modal {
             const width = Math.abs(current.x - this.drawStartPoint.x), height = Math.abs(current.y - this.drawStartPoint.y);
             const left = Math.min(current.x, this.drawStartPoint.x), top = Math.min(current.y, this.drawStartPoint.y);
             if (width > 10 && height > 10) {
-              const newRect: RectElement = { id: `rect_${Date.now()}`, type: "rect", x: left, y: top, width, height, stroke: "#e5a158", strokeWidth: 2, fill: "rgba(229, 161, 88, 0.1)" };
+              const newRect: RectElement = { id: `rect_${Date.now()}`, type: "rect", x: left, y: top, width, height, stroke: "#e5a158", strokeWidth: 2, fill: "rgba(229, 161, 88, 0.1)", borderRadius: 0 };
               list.push(newRect);
               this.elementsByImageName.set(curImg.name, list);
               this.commitHistory();
@@ -927,7 +1014,6 @@ export class NodeInspectorModal extends Modal {
               let finalX = current.x, finalY = current.y;
               let endId = undefined, endAnc = undefined;
 
-              // ИСПРАВЛЕНИЕ: for...of
               const rects = list.filter(x => x.type === "rect") as RectElement[];
               let bestDist = 30;
               let bestAnchor: {id: string, anchor: AnchorType, x: number, y: number} | null = null;
@@ -936,17 +1022,10 @@ export class NodeInspectorModal extends Modal {
                 for (const anc of ["top", "bottom", "left", "right"] as AnchorType[]) {
                   const pt = this.getAnchorPoint(r, anc);
                   const dist = Math.hypot(current.x - pt.x, current.y - pt.y);
-                  if (dist < bestDist) { 
-                    bestDist = dist; 
-                    bestAnchor = { id: r.id, anchor: anc, x: pt.x, y: pt.y }; 
-                  }
+                  if (dist < bestDist) { bestDist = dist; bestAnchor = { id: r.id, anchor: anc, x: pt.x, y: pt.y }; }
                 }
               }
-              
-              if (bestAnchor) { 
-                finalX = bestAnchor.x; finalY = bestAnchor.y; 
-                endId = bestAnchor.id; endAnc = bestAnchor.anchor; 
-              }
+              if (bestAnchor) { finalX = bestAnchor.x; finalY = bestAnchor.y; endId = bestAnchor.id; endAnc = bestAnchor.anchor; }
 
               const newArrow: ArrowElement = {
                 id: `arrow_${Date.now()}`, type: "arrow",
@@ -993,36 +1072,81 @@ export class NodeInspectorModal extends Modal {
     }, { passive: false });
   }
 
+  // --- ТЕКСТОВЫЙ ИНСТРУМЕНТ ---
   private spawnTextInput(clientX: number, clientY: number, editElementId?: string) {
     const curImg = this.images[this.activeIndex];
     if (!curImg) return;
     const list = this.elementsByImageName.get(curImg.name) || [];
+    
     let initialText = "";
     let coords = this.getImageCoords(clientX, clientY);
+    let initialFontSize = Math.max(12, Math.round(16 / this.scale)); // Масштабируем дефолтный размер под текущий зум
+    let initialWidth = Math.max(100, Math.round(200 / this.scale));
 
     if (editElementId) {
       const existing = list.find(el => el.id === editElementId) as TextElement | undefined;
-      if (existing) { initialText = existing.text; coords = { x: existing.x, y: existing.y }; }
+      if (existing) { 
+        initialText = existing.text; 
+        coords = { x: existing.x, y: existing.y }; 
+        initialFontSize = existing.fontSize;
+        initialWidth = existing.width;
+      }
     }
 
     const wrapper = this.elementsLayerEl.createDiv({ cls: "mni-el-input-wrapper" });
-    wrapper.style.left = `${coords.x}px`; wrapper.style.top = `${coords.y}px`;
+    wrapper.style.left = `${coords.x}px`; 
+    wrapper.style.top = `${coords.y}px`;
+    wrapper.style.width = `${initialWidth}px`;
+    
     const textarea = wrapper.createEl("textarea", { cls: "mni-text-input" });
     textarea.value = initialText;
+    textarea.style.fontSize = `${initialFontSize}px`;
     textarea.focus();
+
+    // Автоувеличение высоты при вводе
+    textarea.addEventListener("input", () => {
+      textarea.style.height = "auto";
+      textarea.style.height = textarea.scrollHeight + "px";
+      wrapper.style.height = textarea.scrollHeight + "px";
+    });
+    // Триггерим первоначальный ресайз, если есть текст
+    if (initialText) {
+      textarea.style.height = "auto";
+      textarea.style.height = textarea.scrollHeight + "px";
+      wrapper.style.height = textarea.scrollHeight + "px";
+    }
 
     const finishEditing = () => {
       const text = textarea.value.trim();
+      
+      // Замеряем итоговый размер контейнера
+      const finalWidth = wrapper.offsetWidth || initialWidth;
+      const finalHeight = wrapper.offsetHeight || 40;
+      
       wrapper.remove();
-      if (!text) { if (editElementId) { this.selectedElementIds.delete(editElementId); this.deleteSelected(); } return; }
+      
+      if (!text) { 
+        if (editElementId) { this.selectedElementIds.delete(editElementId); this.deleteSelected(); } 
+        return; 
+      }
 
       if (editElementId) {
         const existing = list.find(el => el.id === editElementId);
-        if (existing && existing.type === "text") existing.text = text;
+        if (existing && existing.type === "text") {
+          existing.text = text;
+          existing.width = finalWidth;
+          existing.height = finalHeight;
+        }
       } else {
-        const newText: TextElement = { id: `text_${Date.now()}`, type: "text", x: coords.x, y: coords.y, width: 200, height: 40, text, fontSize: 16, color: "#ffffff" };
+        const newText: TextElement = { 
+          id: `text_${Date.now()}`, type: "text", 
+          x: coords.x, y: coords.y, 
+          width: finalWidth, height: finalHeight, 
+          text, fontSize: initialFontSize, color: "#ffffff" 
+        };
         list.push(newText);
       }
+      
       this.elementsByImageName.set(curImg.name, list);
       this.commitHistory();
       this.renderElements();

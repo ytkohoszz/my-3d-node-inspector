@@ -541,3 +541,62 @@
   fill: #8db1ff !important;
   r: 7;
 }
+
+/* --- ДОБАВИТЬ В КОНЕЦ styles.css --- */
+
+/* Стили для текста, чтобы он корректно переносился */
+.mni-el-text {
+  word-break: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.mni-el-text p {
+  margin: 0;
+  padding: 0;
+}
+
+.mni-el-input-wrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+.mni-text-input {
+  width: 100%;
+  min-height: 40px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid #e5a158;
+  background: rgba(30, 33, 40, 0.95);
+  color: #fff;
+  font-family: var(--font-text);
+  resize: none; /* Отключаем стандартный ручной ресайз, используем авто-высоту */
+  outline: none;
+  box-sizing: border-box;
+}
+
+/* Курсоры для маркеров ресайза */
+.mni-resize-handle {
+  cursor: pointer;
+  pointer-events: all;
+}
+.mni-resize-handle[data-handle="nw"],
+.mni-resize-handle[data-handle="se"] {
+  cursor: nwse-resize;
+}
+.mni-resize-handle[data-handle="ne"],
+.mni-resize-handle[data-handle="sw"] {
+  cursor: nesw-resize;
+}
+.mni-resize-handle[data-handle="n"],
+.mni-resize-handle[data-handle="s"] {
+  cursor: ns-resize;
+}
+.mni-resize-handle[data-handle="e"],
+.mni-resize-handle[data-handle="w"] {
+  cursor: ew-resize;
+}

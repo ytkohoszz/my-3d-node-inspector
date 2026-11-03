@@ -36,6 +36,7 @@ export interface RectElement extends CanvasElementBase {
   stroke: string;
   strokeWidth: number;
   fill: string;
+  borderRadius?: number; // Новое свойство
 }
 
 export type ArrowRouting = "straight" | "curved" | "orthogonal";
@@ -48,7 +49,6 @@ export interface ArrowElement extends CanvasElementBase {
   y1: number;
   x2: number;
   y2: number;
-  // Контрольные точки для кривой Безье
   cx1?: number;
   cy1?: number;
   cx2?: number;
@@ -60,7 +60,6 @@ export interface ArrowElement extends CanvasElementBase {
   stroke: string;
   strokeWidth: number;
 
-  // Привязка к блокам
   startElementId?: string;
   startAnchor?: AnchorType;
   endElementId?: string;
