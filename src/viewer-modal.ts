@@ -1,4 +1,4 @@
-import { App, Modal, TFile, Notice, MarkdownRenderer } from "obsidian";
+import { App, Modal, TFile, Notice, MarkdownRenderer, Component } from "obsidian";
 import { NodeImageItem, CanvasElement, ToolType, RectElement, TextElement } from "./types";
 import { AnnotationManager } from "./pin-manager";
 
@@ -214,12 +214,13 @@ export class NodeInspectorModal extends Modal {
   private setTool(tool: ToolType) {
     this.currentTool = tool;
     this.selectedElementId = null;
-    this.renderElements(); // Снять выделение
+    this.renderElements();
     this.viewportEl.classList.remove("is-pan-mode", "is-rect-mode", "is-text-mode", "is-select-mode");
     this.viewportEl.classList.add(`is-${tool}-mode`);
     
-    this.toolbarEl.querySelectorAll(".mni-tool-btn").forEach((btn: HTMLElement) => {
-      btn.classList.toggle("is-active", btn.dataset.tool === tool);
+    this.toolbarEl.querySelectorAll(".mni-tool-btn").forEach((btn) => {
+      const btnEl = btn as HTMLElement;
+      btnEl.classList.toggle("is-active", btnEl.dataset.tool === tool);
     });
   }
 
@@ -260,8 +261,8 @@ export class NodeInspectorModal extends Modal {
       } else if (el.type === "text") {
         wrapper.style.color = el.color;
         wrapper.style.fontSize = `${el.fontSize}px`;
-        // Рендерим Markdown!
-        MarkdownRenderer.renderMarkdown(el.text, wrapper, this.noteFile.path, this);
+        // Передаем new Component() для корректной работы в strict mode
+        MarkdownRenderer.renderMarkdown(el.text, wrapper, this.noteFile.path, new Component());
       }
     });
   }
@@ -354,17 +355,18 @@ export class NodeInspectorModal extends Modal {
           this.renderElements();
           
           const curImg = this.images[this.activeIndex];
+          if (!curImg) return; // Защита от undefined
+          
           const el = this.elementsByImageName.get(curImg.name)?.find(x => x.id === this.selectedElementId);
           if (el) {
             this.isDraggingEl = true;
             this.dragStartPoint = { x: e.clientX, y: e.clientY };
             this.elStartPos = { x: el.x, y: el.y };
           }
-          return; // Не начинаем панорамирование
+          return;
         } else {
           this.selectedElementId = null;
           this.renderElements();
-          // Если кликнули в пустоту - начинаем панорамирование
         }
       }
 
@@ -410,6 +412,8 @@ export class NodeInspectorModal extends Modal {
       // ПЕРЕТАСКИВАНИЕ
       if (this.isDraggingEl && this.selectedElementId) {
         const curImg = this.images[this.activeIndex];
+        if (!curImg) return; // Защита от undefined
+
         const el = this.elementsByImageName.get(curImg.name)?.find(x => x.id === this.selectedElementId);
         if (el) {
           const dx = (e.clientX - this.dragStartPoint.x) / this.scale;
