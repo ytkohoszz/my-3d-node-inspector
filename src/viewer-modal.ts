@@ -37,7 +37,6 @@ export class NodeInspectorModal extends Modal {
   private isDraggingHandle: boolean = false;
   private draggedHandleType: string | null = null;
   
-  // НОВОЕ: Переменные для ресайза
   private isResizing: boolean = false;
   private activeResizeHandle: "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | null = null;
   private resizeStartBBox = { x: 0, y: 0, w: 0, h: 0, fontSize: 0 };
@@ -339,7 +338,6 @@ export class NodeInspectorModal extends Modal {
       addColorRow("Заливка", el.fill === "transparent" ? "#000000" : el.fill, (val) => { el.fill = val; this.renderElements(); });
       addRangeRow("Толщина", 1, 10, el.strokeWidth, (val) => { el.strokeWidth = val; this.renderElements(); });
       
-      // Настройка скругления
       addRangeRow("Скругление", 0, 50, el.borderRadius || 0, (val) => { 
         el.borderRadius = val; 
         this.renderElements(); 
@@ -512,7 +510,6 @@ export class NodeInspectorModal extends Modal {
         MarkdownRenderer.renderMarkdown(el.text, wrapper, this.noteFile.path, new Component());
       }
 
-      // Если элемент один выделен — рисуем маркеры изменения размера (Resize Handles)
       if (isSelected && this.selectedElementIds.size === 1) {
         const handles = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
         handles.forEach(h => {
@@ -626,7 +623,6 @@ export class NodeInspectorModal extends Modal {
         const svgTarget = e.target as SVGElement;
         const clickedEl = (e.target as HTMLElement).closest(".mni-el, .mni-el-svg") as HTMLElement | SVGElement;
 
-        // Проверка на клик по маркеру ресайза
         if (svgTarget.classList.contains("mni-resize-handle")) {
           this.isResizing = true;
           this.activeResizeHandle = svgTarget.dataset.handle as any;
@@ -637,10 +633,11 @@ export class NodeInspectorModal extends Modal {
           const curImg = this.images[this.activeIndex];
           if (curImg) {
             const el = this.elementsByImageName.get(curImg.name)?.find(x => x.id === this.lastSelectedId);
-            if (el) {
+            // ФИКС: Проверяем, что el — не стрелка, прежде чем читать x/y/width/height
+            if (el && el.type !== "arrow") {
               this.resizeStartBBox = { 
                 x: el.x, y: el.y, w: el.width, h: el.height, 
-                fontSize: (el as any).fontSize || 16 
+                fontSize: (el as TextElement).fontSize || 16 
               };
               this.dragStartPoint = this.getImageCoords(e.clientX, e.clientY);
             }
@@ -748,12 +745,12 @@ export class NodeInspectorModal extends Modal {
 
       if (Math.abs(e.clientX - this.startPanPoint.x) > 4 || Math.abs(e.clientY - this.startPanPoint.y) > 4) pointerMoved = true;
 
-      // РЕСАЙЗ ЭЛЕМЕНТОВ
       if (this.isResizing && this.lastSelectedId && this.activeResizeHandle) {
         const curImg = this.images[this.activeIndex];
         if (!curImg) return;
         const el = this.elementsByImageName.get(curImg.name)?.find(x => x.id === this.lastSelectedId);
-        if (!el) return;
+        // ФИКС: Проверяем, что el существует и не стрелка
+        if (!el || el.type === "arrow") return;
 
         const current = this.getImageCoords(e.clientX, e.clientY);
         const dx = current.x - this.dragStartPoint.x;
@@ -764,29 +761,19 @@ export class NodeInspectorModal extends Modal {
         let nw = this.resizeStartBBox.w;
         let nh = this.resizeStartBBox.h;
 
-        if (this.activeResizeHandle.includes("w")) {
-          nx = this.resizeStartBBox.x + dx;
-          nw = this.resizeStartBBox.w - dx;
-        }
-        if (this.activeResizeHandle.includes("e")) {
-          nw = this.resizeStartBBox.w + dx;
-        }
-        if (this.activeResizeHandle.includes("n")) {
-          ny = this.resizeStartBBox.y + dy;
-          nh = this.resizeStartBBox.h - dy;
-        }
-        if (this.activeResizeHandle.includes("s")) {
-          nh = this.resizeStartBBox.h + dy;
-        }
+        if (this.activeResizeHandle.includes("w")) { nx = this.resizeStartBBox.x + dx; nw = this.resizeStartBBox.w - dx; }
+        if (this.activeResizeHandle.includes("e")) { nw = this.resizeStartBBox.w + dx; }
+        if (this.activeResizeHandle.includes("n")) { ny = this.resizeStartBBox.y + dy; nh = this.resizeStartBBox.h - dy; }
+        if (this.activeResizeHandle.includes("s")) { nh = this.resizeStartBBox.h + dy; }
 
         // Пропорциональное масштабирование шрифта для текста (только если тянем за угол)
         if (el.type === "text" && this.activeResizeHandle.length === 2) {
           const scaleX = nw / this.resizeStartBBox.w;
           const scaleY = nh / this.resizeStartBBox.h;
-          const scale = Math.max(scaleX, scaleY); // Берем наибольшее изменение
+          const scale = Math.max(scaleX, scaleY);
           
           el.fontSize = Math.max(8, this.resizeStartBBox.fontSize * scale);
-          nh = this.resizeStartBBox.h * scale; // Пропорционально меняем высоту
+          nh = this.resizeStartBBox.h * scale;
           
           if (this.activeResizeHandle.includes("n")) {
             ny = this.resizeStartBBox.y + this.resizeStartBBox.h - nh;
@@ -835,7 +822,6 @@ export class NodeInspectorModal extends Modal {
         return;
       }
 
-      // ... ОСТАЛЬНАЯ ЛОГИКА ДЛЯ СТРЕЛОК (isDraggingHandle) И ПЕРЕТАСКИВАНИЯ (isDraggingEl) ...
       if (this.isDraggingHandle && this.lastSelectedId && this.draggedHandleType) {
         const curImg = this.images[this.activeIndex];
         if (!curImg) return;
@@ -1072,7 +1058,6 @@ export class NodeInspectorModal extends Modal {
     }, { passive: false });
   }
 
-  // --- ТЕКСТОВЫЙ ИНСТРУМЕНТ ---
   private spawnTextInput(clientX: number, clientY: number, editElementId?: string) {
     const curImg = this.images[this.activeIndex];
     if (!curImg) return;
@@ -1080,7 +1065,7 @@ export class NodeInspectorModal extends Modal {
     
     let initialText = "";
     let coords = this.getImageCoords(clientX, clientY);
-    let initialFontSize = Math.max(12, Math.round(16 / this.scale)); // Масштабируем дефолтный размер под текущий зум
+    let initialFontSize = Math.max(12, Math.round(16 / this.scale));
     let initialWidth = Math.max(100, Math.round(200 / this.scale));
 
     if (editElementId) {
@@ -1103,13 +1088,11 @@ export class NodeInspectorModal extends Modal {
     textarea.style.fontSize = `${initialFontSize}px`;
     textarea.focus();
 
-    // Автоувеличение высоты при вводе
     textarea.addEventListener("input", () => {
       textarea.style.height = "auto";
       textarea.style.height = textarea.scrollHeight + "px";
       wrapper.style.height = textarea.scrollHeight + "px";
     });
-    // Триггерим первоначальный ресайз, если есть текст
     if (initialText) {
       textarea.style.height = "auto";
       textarea.style.height = textarea.scrollHeight + "px";
@@ -1119,7 +1102,6 @@ export class NodeInspectorModal extends Modal {
     const finishEditing = () => {
       const text = textarea.value.trim();
       
-      // Замеряем итоговый размер контейнера
       const finalWidth = wrapper.offsetWidth || initialWidth;
       const finalHeight = wrapper.offsetHeight || 40;
       
