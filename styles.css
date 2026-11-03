@@ -438,3 +438,68 @@
   cursor: not-allowed;
   pointer-events: none;
 }
+
+/* --- СТИЛИ ДЛЯ ПАНЕЛИ СВОЙСТВ (ЭТАП 6) --- */
+
+.mni-properties-panel {
+  position: absolute;
+  top: 80px; /* Отступ от верхней панели */
+  right: 14px;
+  width: 220px;
+  z-index: 50;
+  padding: 14px;
+  border-radius: 12px;
+  background: rgba(30, 33, 40, 0.95);
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mni-properties-panel.is-hidden {
+  display: none;
+}
+
+.mni-prop-title {
+  margin: 0 0 4px 0;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-bottom: 8px;
+}
+
+.mni-prop-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.85rem;
+  color: var(--text-normal);
+}
+
+.mni-prop-row input[type="color"] {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  background: transparent;
+}
+
+.mni-prop-row input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.mni-prop-row input[type="color"]::-webkit-color-swatch {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+}
+
+.mni-prop-row input[type="range"] {
+  width: 100px;
+  cursor: pointer;
+}

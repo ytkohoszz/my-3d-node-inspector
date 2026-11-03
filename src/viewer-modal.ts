@@ -52,6 +52,7 @@ export class NodeInspectorModal extends Modal {
   private svgLayerEl!: SVGSVGElement;
   private viewportEl!: HTMLElement;
   private toolbarEl!: HTMLElement;
+  private propertiesPanelEl!: HTMLElement;
   private deleteBtn!: HTMLButtonElement;
   private undoBtn!: HTMLButtonElement;
   private redoBtn!: HTMLButtonElement;
@@ -68,7 +69,7 @@ export class NodeInspectorModal extends Modal {
   async onOpen(): Promise<void> {
     const { contentEl, modalEl } = this;
     modalEl.addClass("mod-3d-node-inspector");
-    modalEl.tabIndex = 0; // Важно для перехвата клавиатуры
+    modalEl.tabIndex = 0;
     contentEl.empty();
 
     const container = contentEl.createDiv({ cls: "mni-container" });
@@ -133,9 +134,11 @@ export class NodeInspectorModal extends Modal {
     this.loadActiveImage();
 
     this.renderToolbar(container);
+    this.propertiesPanelEl = container.createDiv({ cls: "mni-properties-panel is-hidden" });
+    
     this.bindPointerEvents(this.viewportEl);
     this.bindKeyboardEvents();
-    this.setTool("select"); // По умолчанию - выделение
+    this.setTool("select");
 
     // 5. Нижняя панель
     if (this.images.length > 1) {
@@ -200,6 +203,7 @@ export class NodeInspectorModal extends Modal {
     if (stateStr) {
       this.elementsByImageName = new Map(JSON.parse(stateStr));
       this.selectedElementId = null;
+      this.updatePropertiesPanel();
       this.renderElements();
       this.manager.saveElements(this.elementsByImageName);
       this.updateUndoButtons();
@@ -238,7 +242,6 @@ export class NodeInspectorModal extends Modal {
       btn.onclick = () => this.setTool(t.id);
     });
 
-    // Кнопка удаления (красный крестик)
     this.deleteBtn = this.toolbarEl.createEl("button", {
       cls: `mni-tool-btn mni-tool-delete is-disabled`, text: "✖", attr: { title: "Удалить выбранное (Delete)" }
     });
@@ -250,6 +253,7 @@ export class NodeInspectorModal extends Modal {
     this.currentTool = tool;
     this.selectedElementId = null;
     this.updateDeleteButton();
+    this.updatePropertiesPanel();
     this.renderElements();
     
     this.viewportEl.classList.remove("is-pan-mode", "is-rect-mode", "is-text-mode", "is-select-mode", "is-arrow-mode");
@@ -260,6 +264,57 @@ export class NodeInspectorModal extends Modal {
       if (btnEl === this.deleteBtn) return;
       btnEl.classList.toggle("is-active", btnEl.dataset.tool === tool);
     });
+  }
+
+  // --- ПАНЕЛЬ СВОЙСТВ ---
+  private updatePropertiesPanel() {
+    if (!this.propertiesPanelEl) return;
+    this.propertiesPanelEl.empty();
+
+    const curImg = this.images[this.activeIndex];
+    if (!curImg || !this.selectedElementId) {
+      this.propertiesPanelEl.classList.add("is-hidden");
+      return;
+    }
+
+    const el = this.elementsByImageName.get(curImg.name)?.find(x => x.id === this.selectedElementId);
+    if (!el) {
+      this.propertiesPanelEl.classList.add("is-hidden");
+      return;
+    }
+
+    this.propertiesPanelEl.classList.remove("is-hidden");
+    this.propertiesPanelEl.createEl("h4", { text: "Свойства", cls: "mni-prop-title" });
+
+    const addColorRow = (label: string, currentColor: string, onChange: (val: string) => void) => {
+      const row = this.propertiesPanelEl.createDiv({ cls: "mni-prop-row" });
+      row.createSpan({ text: label });
+      const input = row.createEl("input", { type: "color" });
+      input.value = currentColor;
+      input.oninput = (e) => onChange((e.target as HTMLInputElement).value);
+      input.onchange = () => this.commitHistory();
+    };
+
+    const addRangeRow = (label: string, min: number, max: number, current: number, onChange: (val: number) => void) => {
+      const row = this.propertiesPanelEl.createDiv({ cls: "mni-prop-row" });
+      row.createSpan({ text: label });
+      const input = row.createEl("input", { type: "range", attr: { min, max } });
+      input.value = current.toString();
+      input.oninput = (e) => onChange(Number((e.target as HTMLInputElement).value));
+      input.onchange = () => this.commitHistory();
+    };
+
+    if (el.type === "rect") {
+      addColorRow("Обводка", el.stroke, (val) => { el.stroke = val; this.renderElements(); });
+      addColorRow("Заливка", el.fill === "transparent" ? "#000000" : el.fill, (val) => { el.fill = val; this.renderElements(); });
+      addRangeRow("Толщина", 1, 10, el.strokeWidth, (val) => { el.strokeWidth = val; this.renderElements(); });
+    } else if (el.type === "arrow") {
+      addColorRow("Цвет", el.stroke, (val) => { el.stroke = val; this.renderElements(); });
+      addRangeRow("Толщина", 1, 10, el.strokeWidth, (val) => { el.strokeWidth = val; this.renderElements(); });
+    } else if (el.type === "text") {
+      addColorRow("Цвет текста", el.color, (val) => { el.color = val; this.renderElements(); });
+      addRangeRow("Размер", 10, 72, el.fontSize, (val) => { el.fontSize = val; this.renderElements(); });
+    }
   }
 
   // --- РЕНДЕР ---
@@ -302,6 +357,7 @@ export class NodeInspectorModal extends Modal {
         line.setAttribute("y1", el.y1.toString());
         line.setAttribute("x2", el.x2.toString());
         line.setAttribute("y2", el.y2.toString());
+        // Если выделено, делаем обводку белой (или оставляем цвет, но с белым маркером)
         line.setAttribute("stroke", isSelected ? "#ffffff" : el.stroke);
         line.setAttribute("stroke-width", el.strokeWidth.toString());
         line.setAttribute("marker-end", isSelected ? "url(#mni-arrowhead-selected)" : "url(#mni-arrowhead)");
@@ -311,7 +367,6 @@ export class NodeInspectorModal extends Modal {
         
         this.svgLayerEl.appendChild(line);
 
-        // Рисуем маркеры (кружочки) на концах, если стрелка выделена
         if (isSelected) {
           const drawHandle = (cx: number, cy: number, type: "start" | "end") => {
             const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
@@ -429,6 +484,7 @@ export class NodeInspectorModal extends Modal {
     this.elementsByImageName.set(curImg.name, list.filter(el => el.id !== this.selectedElementId));
     this.selectedElementId = null;
     this.updateDeleteButton();
+    this.updatePropertiesPanel();
     this.renderElements();
     this.commitHistory();
   }
@@ -446,7 +502,7 @@ export class NodeInspectorModal extends Modal {
     });
 
     target.addEventListener("pointerdown", (e: PointerEvent) => {
-      if ((e.target as HTMLElement).closest(".mni-toolbar, .mni-topbar, .mni-bottombar")) return;
+      if ((e.target as HTMLElement).closest(".mni-toolbar, .mni-topbar, .mni-bottombar, .mni-properties-panel")) return;
 
       this.modalEl.focus();
       e.preventDefault();
@@ -460,7 +516,6 @@ export class NodeInspectorModal extends Modal {
         const clickedEl = (e.target as HTMLElement).closest(".mni-el, .mni-el-svg") as HTMLElement | SVGElement;
 
         if (svgTarget.classList.contains("mni-arrow-handle")) {
-          // Тащим за маркер стрелки
           this.isDraggingHandle = true;
           this.draggedHandleType = svgTarget.dataset.handle as "start" | "end";
           this.selectedElementId = svgTarget.dataset.id || null;
@@ -470,6 +525,7 @@ export class NodeInspectorModal extends Modal {
         if (clickedEl) {
           this.selectedElementId = clickedEl.dataset.id || null;
           this.updateDeleteButton();
+          this.updatePropertiesPanel(); // Обновляем свойства при клике
           this.renderElements();
           
           const curImg = this.images[this.activeIndex];
@@ -491,6 +547,7 @@ export class NodeInspectorModal extends Modal {
         } else {
           this.selectedElementId = null;
           this.updateDeleteButton();
+          this.updatePropertiesPanel();
           this.renderElements();
         }
       }
@@ -546,7 +603,7 @@ export class NodeInspectorModal extends Modal {
         pointerMoved = true;
       }
 
-      // ТАЩИМ ЗА МАРКЕР СТРЕЛКИ (Начало или Конец)
+      // ТАЩИМ ЗА МАРКЕР СТРЕЛКИ
       if (this.isDraggingHandle && this.selectedElementId && this.draggedHandleType) {
         const curImg = this.images[this.activeIndex];
         if (!curImg) return;
@@ -559,7 +616,6 @@ export class NodeInspectorModal extends Modal {
             el.x2 = current.x; el.y2 = current.y;
           }
           
-          // Быстрое обновление SVG без полной перерисовки
           const line = this.svgLayerEl.querySelector(`line[data-id="${el.id}"]`);
           if (line) {
             line.setAttribute("x1", el.x1.toString());
@@ -598,7 +654,6 @@ export class NodeInspectorModal extends Modal {
             svgEl.setAttribute("x2", el.x2.toString());
             svgEl.setAttribute("y2", el.y2.toString());
             
-            // Обновляем и маркеры
             this.svgLayerEl.querySelector(`.mni-arrow-handle[data-handle="start"]`)?.setAttribute("cx", el.x1.toString());
             this.svgLayerEl.querySelector(`.mni-arrow-handle[data-handle="start"]`)?.setAttribute("cy", el.y1.toString());
             this.svgLayerEl.querySelector(`.mni-arrow-handle[data-handle="end"]`)?.setAttribute("cx", el.x2.toString());
@@ -661,7 +716,6 @@ export class NodeInspectorModal extends Modal {
     const onPointerEnd = async (e: PointerEvent) => {
       this.activePointers.delete(e.pointerId);
 
-      // Завершение перетаскивания маркера
       if (this.isDraggingHandle) {
         this.isDraggingHandle = false;
         this.draggedHandleType = null;
@@ -669,7 +723,6 @@ export class NodeInspectorModal extends Modal {
         return;
       }
 
-      // Завершение перетаскивания объекта
       if (this.isDraggingEl) {
         this.isDraggingEl = false;
         this.draggedDOMEl = null;
@@ -678,7 +731,6 @@ export class NodeInspectorModal extends Modal {
         return;
       }
 
-      // Завершение рисования
       if (this.isDrawing && this.previewEl) {
         this.isDrawing = false;
         const current = this.getImageCoords(e.clientX, e.clientY);
@@ -726,7 +778,6 @@ export class NodeInspectorModal extends Modal {
         return;
       }
 
-      // Клик инструментом Текст
       if (this.currentTool === "text" && !pointerMoved) {
         this.spawnTextInput(e.clientX, e.clientY);
       }
