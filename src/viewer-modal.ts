@@ -422,7 +422,7 @@ export class NodeInspectorModal extends Modal {
         
         this.svgLayerEl.appendChild(line);
 
-        // Показываем маркеры только если стрелка ОДНА выделена (чтобы не нагромождать)
+        // Показываем маркеры только если стрелка ОДНА выделена
         if (isSelected && this.selectedElementIds.size === 1) {
           const drawHandle = (cx: number, cy: number, type: "start" | "end") => {
             const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
@@ -633,7 +633,8 @@ export class NodeInspectorModal extends Modal {
       }
 
       // --- ЛОГИКА РИСОВАНИЯ ---
-      if (this.currentTool !== "pan" && this.currentTool !== "select" && this.activePointers.size === 1) {
+      // Убрана проверка !== "select", так как TypeScript уже знает, что мы в этот блок не попадем с этим инструментом
+      if (this.currentTool !== "pan" && this.activePointers.size === 1) {
         this.isDrawing = true;
         const coords = this.getImageCoords(e.clientX, e.clientY);
         this.drawStartPoint = coords;
@@ -720,7 +721,7 @@ export class NodeInspectorModal extends Modal {
             svgEl.setAttribute("stroke", this.selectedElementIds.has(svgEl.dataset.id || '') ? "#ffffff" : "#e5a158");
           });
           
-          this.lastSelectedId = this.selectedElementIds.size > 0 ? Array.from(this.selectedElementIds)[0] : null;
+          this.lastSelectedId = this.selectedElementIds.size > 0 ? (Array.from(this.selectedElementIds)[0] || null) : null;
           this.updateDeleteButton();
         }
         return;
