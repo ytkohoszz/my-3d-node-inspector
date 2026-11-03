@@ -50,6 +50,7 @@ export class NodeInspectorModal extends Modal {
   private svgLayerEl!: SVGSVGElement;
   private viewportEl!: HTMLElement;
   private toolbarEl!: HTMLElement;
+  private deleteBtn!: HTMLButtonElement;
   private undoBtn!: HTMLButtonElement;
   private redoBtn!: HTMLButtonElement;
 
@@ -65,6 +66,7 @@ export class NodeInspectorModal extends Modal {
   async onOpen(): Promise<void> {
     const { contentEl, modalEl } = this;
     modalEl.addClass("mod-3d-node-inspector");
+    modalEl.tabIndex = 0; // Важно для перехвата клавиатуры
     contentEl.empty();
 
     const container = contentEl.createDiv({ cls: "mni-container" });
@@ -169,6 +171,7 @@ export class NodeInspectorModal extends Modal {
       this.history.push(currentState);
       this.historyIndex++;
 
+      // Ограничиваем историю 50 шагами (отсекая самые старые)
       if (this.history.length > this.MAX_HISTORY) {
         this.history.shift();
         this.historyIndex--;
@@ -207,14 +210,22 @@ export class NodeInspectorModal extends Modal {
   private updateUndoButtons() {
     if (this.undoBtn) this.undoBtn.disabled = this.historyIndex <= 0;
     if (this.redoBtn) this.redoBtn.disabled = this.historyIndex >= this.history.length - 1;
+    this.updateDeleteButton();
+  }
+
+  private updateDeleteButton() {
+    if (this.deleteBtn) {
+      this.deleteBtn.disabled = !this.selectedElementId;
+      this.deleteBtn.classList.toggle("is-disabled", !this.selectedElementId);
+    }
   }
 
   // --- ИНСТРУМЕНТЫ ---
   private renderToolbar(container: HTMLElement) {
     this.toolbarEl = container.createDiv({ cls: "mni-toolbar" });
     const tools: { id: ToolType; icon: string; label: string; hotkey: string }[] = [
-      { id: "pan", icon: "🖐", label: "Панорама", hotkey: "V" },
-      { id: "select", icon: "🖱️", label: "Выделение", hotkey: "S" },
+      { id: "pan", icon: "✋", label: "Панорама", hotkey: "V" },
+      { id: "select", icon: "↖️", label: "Выделение", hotkey: "S" },
       { id: "rect", icon: "⬜", label: "Прямоугольник", hotkey: "R" },
       { id: "arrow", icon: "↗️", label: "Стрелка", hotkey: "A" },
       { id: "text", icon: "T", label: "Текст", hotkey: "T" },
@@ -227,17 +238,27 @@ export class NodeInspectorModal extends Modal {
       btn.dataset.tool = t.id;
       btn.onclick = () => this.setTool(t.id);
     });
+
+    // Кнопка удаления
+    this.deleteBtn = this.toolbarEl.createEl("button", {
+      cls: `mni-tool-btn mni-tool-delete is-disabled`, text: "🗑️", attr: { title: "Удалить выбранное (Delete)" }
+    });
+    this.deleteBtn.disabled = true;
+    this.deleteBtn.onclick = () => this.deleteSelected();
   }
 
   private setTool(tool: ToolType) {
     this.currentTool = tool;
     this.selectedElementId = null;
+    this.updateDeleteButton();
     this.renderElements();
+    
     this.viewportEl.classList.remove("is-pan-mode", "is-rect-mode", "is-text-mode", "is-select-mode", "is-arrow-mode");
     this.viewportEl.classList.add(`is-${tool}-mode`);
     
     this.toolbarEl.querySelectorAll(".mni-tool-btn").forEach((btn) => {
       const btnEl = btn as HTMLElement;
+      if (btnEl === this.deleteBtn) return;
       btnEl.classList.toggle("is-active", btnEl.dataset.tool === tool);
     });
   }
@@ -257,7 +278,7 @@ export class NodeInspectorModal extends Modal {
     if (!this.elementsLayerEl) return;
     this.elementsLayerEl.empty();
     
-    // Очищаем SVG и добавляем defs для маркера стрелки
+    // Обновляем SVG defs
     this.svgLayerEl.innerHTML = `
       <defs>
         <marker id="mni-arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
@@ -353,8 +374,10 @@ export class NodeInspectorModal extends Modal {
 
   // --- СОБЫТИЯ ---
   private bindKeyboardEvents() {
-    this.modalEl.tabIndex = 0;
-    this.modalEl.addEventListener("keydown", (e: KeyboardEvent) => {
+    // Добавляем слушатель на window, чтобы клавиши работали всегда, когда модалка открыта
+    const keyHandler = (e: KeyboardEvent) => {
+      if (!this.containerEl.isConnected) return; // Если окно закрыто — игнорируем
+      
       const isInput = ["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName);
       if (isInput) return;
 
@@ -374,7 +397,13 @@ export class NodeInspectorModal extends Modal {
         e.preventDefault();
         this.deleteSelected();
       }
-    });
+    };
+
+    window.addEventListener("keydown", keyHandler);
+    this.onClose = () => {
+      window.removeEventListener("keydown", keyHandler);
+      this.contentEl.empty();
+    };
   }
 
   private deleteSelected() {
@@ -383,6 +412,7 @@ export class NodeInspectorModal extends Modal {
     const list = this.elementsByImageName.get(curImg.name) || [];
     this.elementsByImageName.set(curImg.name, list.filter(el => el.id !== this.selectedElementId));
     this.selectedElementId = null;
+    this.updateDeleteButton();
     this.renderElements();
     this.commitHistory();
   }
@@ -402,6 +432,9 @@ export class NodeInspectorModal extends Modal {
     target.addEventListener("pointerdown", (e: PointerEvent) => {
       if ((e.target as HTMLElement).closest(".mni-toolbar, .mni-topbar, .mni-bottombar")) return;
 
+      // Возвращаем фокус в окно при клике по холсту
+      this.modalEl.focus();
+
       e.preventDefault();
       target.setPointerCapture(e.pointerId);
       this.activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -412,6 +445,7 @@ export class NodeInspectorModal extends Modal {
         const clickedEl = (e.target as HTMLElement).closest(".mni-el, .mni-el-svg") as HTMLElement | SVGElement;
         if (clickedEl) {
           this.selectedElementId = clickedEl.dataset.id || null;
+          this.updateDeleteButton();
           this.renderElements();
           
           const curImg = this.images[this.activeIndex];
@@ -432,6 +466,7 @@ export class NodeInspectorModal extends Modal {
           return;
         } else {
           this.selectedElementId = null;
+          this.updateDeleteButton();
           this.renderElements();
         }
       }
@@ -649,7 +684,7 @@ export class NodeInspectorModal extends Modal {
     }, { passive: false });
   }
 
-  // --- ТЕКСТОВЫЙ ИНСТРУМЕНТ (Создание и Редактирование) ---
+  // --- ТЕКСТОВЫЙ ИНСТРУМЕНТ ---
   private spawnTextInput(clientX: number, clientY: number, editElementId?: string) {
     const curImg = this.images[this.activeIndex];
     if (!curImg) return;
